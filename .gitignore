@@ -1,0 +1,138 @@
+# ============================================================================
+# ENVIRONMENT & SECRETS — NEVER COMMIT THESE
+# ============================================================================
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.staging
+*.pem
+*.key
+secrets/
+credentials/
+
+# ============================================================================
+# PYTHON / BACKEND
+# ============================================================================
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Byte-compiled / cached Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+wheels/
+pip-wheel-metadata/
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Type checkers
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+
+# Jupyter (in case you use notebooks for ML exploration later)
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ============================================================================
+# NODE / FRONTEND (Next.js)
+# ============================================================================
+node_modules/
+.next/
+out/
+build/
+.vercel/
+.turbo/
+
+# npm/yarn/pnpm
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.npm/
+.yarn/
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# ============================================================================
+# DATABASES & UPLOADS (local dev artifacts)
+# ============================================================================
+*.sqlite
+*.sqlite3
+*.db
+/uploads/
+/tmp/
+
+# ============================================================================
+# LOGS
+# ============================================================================
+*.log
+logs/
+
+# ============================================================================
+# OS JUNK
+# ============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ============================================================================
+# EDITORS / IDEs
+# ============================================================================
+.vscode/
+!.vscode/settings.json.example
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ============================================================================
+# AI TOOL ARTIFACTS
+# ============================================================================
+.cursor/
+.aider*
+.claude/
+
+# ============================================================================
+# ML / EXPERIMENT TRACKING (for later when you add W&B)
+# ============================================================================
+wandb/
+mlruns/
+*.pt
+*.pth
+*.onnx
+*.pkl
+*.h5
+checkpoints/
