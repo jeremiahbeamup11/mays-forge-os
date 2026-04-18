@@ -1,0 +1,46 @@
+# Pre-commit hooks for Mays Forge OS
+# Docs: https://pre-commit.com/
+#
+# These hooks run automatically on `git commit`. If any fail,
+# the commit is blocked until you fix them.
+#
+# To run manually against all files: `pre-commit run --all-files`
+# To update hook versions: `pre-commit autoupdate`
+
+repos:
+  # --- Basic file hygiene (works on all file types) ---
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-added-large-files
+        args: ["--maxkb=1000"]
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+
+  # --- Python: ruff (lint + format) ---
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.11
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+        files: ^backend/
+      - id: ruff-format
+        files: ^backend/
+
+  # --- Python: mypy (type checking) ---
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (backend)
+        entry: bash -c 'cd backend && uv run mypy app'
+        language: system
+        types: [python]
+        files: ^backend/
+        pass_filenames: false

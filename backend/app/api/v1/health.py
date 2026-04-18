@@ -10,7 +10,7 @@ service is alive. A well-designed health endpoint distinguishes between:
 For now we only need liveness. Readiness will matter once Supabase is wired in.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
@@ -53,5 +53,5 @@ async def health() -> HealthResponse:
         app_name=settings.APP_NAME,
         version=settings.VERSION,
         environment=settings.ENVIRONMENT,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
     )

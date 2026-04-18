@@ -11,8 +11,8 @@ Keep this file small. If it grows beyond ~100 lines, we've put logic here
 that belongs elsewhere.
 """
 
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -49,8 +49,7 @@ app = FastAPI(
     title=settings.APP_NAME,
     version=settings.VERSION,
     description=(
-        "Mays Forge OS — urban sustainability and infrastructure "
-        "intelligence backend API."
+        "Mays Forge OS — urban sustainability and infrastructure intelligence backend API."
     ),
     lifespan=lifespan,
     # Docs are useful in dev; disable or protect in production.

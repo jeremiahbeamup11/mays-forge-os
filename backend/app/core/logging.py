@@ -11,6 +11,8 @@ This is vastly easier to query than unstructured text logs.
 
 import logging
 import sys
+from collections.abc import MutableMapping
+from typing import Any, cast
 
 import structlog
 from structlog.types import Processor
@@ -79,8 +81,10 @@ _SENSITIVE_KEYS = frozenset(
 
 
 def _redact_sensitive_fields(
-    _logger: object, _method_name: str, event_dict: dict[str, object]
-) -> dict[str, object]:
+    _logger: Any,
+    _method_name: str,
+    event_dict: MutableMapping[str, Any],
+) -> MutableMapping[str, Any]:
     """Replace any sensitive field values with `***REDACTED***`.
 
     Matches keys case-insensitively against a denylist. Belt-and-suspenders
@@ -100,4 +104,4 @@ def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
         log = get_logger(__name__)
         log.info("user_login", user_id=user.id, ip=request.client.host)
     """
-    return structlog.get_logger(name)
+    return cast(structlog.stdlib.BoundLogger, structlog.get_logger(name))
