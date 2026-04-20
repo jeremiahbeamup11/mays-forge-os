@@ -32,15 +32,19 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
 
-    # --- Supabase (required once we wire up the database) ---
-    # Marked optional for now so the app can boot without them during setup.
-    # We'll tighten these to required once auth is integrated.
-    SUPABASE_URL: str | None = None
-    SUPABASE_ANON_KEY: str | None = None
-    SUPABASE_SERVICE_ROLE_KEY: str | None = None
+    # --- Supabase (required) ---
+    SUPABASE_URL: str = Field(..., description="Supabase project URL")
+    SUPABASE_ANON_KEY: str = Field(..., description="Supabase anon/public key")
+    SUPABASE_SERVICE_ROLE_KEY: str = Field(
+        ..., description="Supabase service role key (server-side only)"
+    )
 
     # --- Security ---
-    JWT_SECRET: str | None = None
+    JWT_SECRET: str = Field(
+        ..., description="JWT secret from Supabase; used to verify access tokens"
+    )
+    JWT_ALGORITHM: Literal["HS256"] = "HS256"
+    JWT_AUDIENCE: str = "authenticated"
 
     # --- CORS ---
     CORS_ALLOWED_ORIGINS: str = Field(
@@ -69,8 +73,11 @@ def get_settings() -> Settings:
     Using lru_cache ensures Settings() is instantiated exactly once per process.
     In tests, you can override this with `get_settings.cache_clear()` and
     reconfigure environment variables.
+
+    Note: mypy can't see that Pydantic Settings loads required fields from
+    the environment at runtime, so we suppress the spurious call-arg error.
     """
-    return Settings()
+    return Settings()  # type: ignore[call-arg]
 
 
 settings = get_settings()
