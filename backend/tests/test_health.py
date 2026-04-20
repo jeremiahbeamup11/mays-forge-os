@@ -77,3 +77,32 @@ class TestHealthEndpoint:
         )
         for forbidden in forbidden_substrings:
             assert forbidden not in body, f"Health response leaks: {forbidden}"
+
+
+class TestErrorResponses:
+    """Tests for the global error handlers — ensures consistent error shape."""
+
+    async def test_404_returns_structured_error(self, client: AsyncClient) -> None:
+        """Unknown paths must return our ErrorResponse shape, not raw {detail:...}."""
+        response = await client.get("/api/v1/this-does-not-exist")
+        assert response.status_code == 404
+        data = response.json()
+        assert data["error"] == "not_found"
+        assert "message" in data
+        assert "request_id" in data
+
+    async def test_all_errors_include_request_id(self, client: AsyncClient) -> None:
+        """Every error response must include the request_id for debuggability."""
+        response = await client.get("/api/v1/this-does-not-exist")
+        data = response.json()
+        assert data["request_id"] is not None
+
+    async def test_request_id_header_present_on_success(self, client: AsyncClient) -> None:
+        """Successful responses must expose the X-Request-ID header."""
+        response = await client.get("/api/v1/health")
+        assert "x-request-id" in {k.lower() for k in response.headers.keys()}
+
+    async def test_request_id_header_present_on_error(self, client: AsyncClient) -> None:
+        """Error responses must also expose the X-Request-ID header."""
+        response = await client.get("/api/v1/this-does-not-exist")
+        assert "x-request-id" in {k.lower() for k in response.headers.keys()}

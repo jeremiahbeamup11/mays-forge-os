@@ -3,11 +3,12 @@
 Responsibilities of this file:
 - Create the FastAPI app instance
 - Configure logging
-- Register middleware (CORS, future: rate limiting, request ID injection)
+- Register middleware (CORS, request ID, access log)
+- Register exception handlers
 - Include API routers
 - Define application lifecycle hooks (startup/shutdown)
 
-Keep this file small. If it grows beyond ~100 lines, we've put logic here
+Keep this file small. If it grows beyond ~150 lines, we've put logic here
 that belongs elsewhere.
 """
 
@@ -15,11 +16,19 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.router import api_router
 from app.config import settings
+from app.core.exceptions import (
+    http_exception_handler,
+    unhandled_exception_handler,
+    validation_exception_handler,
+)
 from app.core.logging import configure_logging, get_logger
+from app.core.middleware import AccessLogMiddleware, RequestIdMiddleware
 
 
 @asynccontextmanager
@@ -28,8 +37,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     Code before `yield` runs at startup.
     Code after `yield` runs at shutdown.
-
-    This is the modern FastAPI pattern (replaces deprecated @app.on_event).
     """
     configure_logging()
     log = get_logger(__name__)
@@ -52,22 +59,31 @@ app = FastAPI(
         "Mays Forge OS — urban sustainability and infrastructure intelligence backend API."
     ),
     lifespan=lifespan,
-    # Docs are useful in dev; disable or protect in production.
     docs_url="/docs" if not settings.is_production else None,
     redoc_url="/redoc" if not settings.is_production else None,
     openapi_url="/openapi.json" if not settings.is_production else None,
 )
 
 # --- Middleware ---
-# CORS lets your Next.js frontend (on a different origin) call this API.
-# Without this, browsers will block requests with a CORS error.
+# Middleware order matters. Starlette runs them in REVERSE order of
+# registration on the way IN, and forward order on the way OUT.
+# We register CORS last so it runs first — it needs to handle preflight
+# OPTIONS requests before anything else touches them.
+app.add_middleware(AccessLogMiddleware)
+app.add_middleware(RequestIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    expose_headers=["X-Request-ID"],
 )
+
+# --- Exception handlers ---
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)  # type: ignore[arg-type]
+app.add_exception_handler(RequestValidationError, validation_exception_handler)  # type: ignore[arg-type]
+app.add_exception_handler(Exception, unhandled_exception_handler)
 
 # --- Routers ---
 app.include_router(api_router)
