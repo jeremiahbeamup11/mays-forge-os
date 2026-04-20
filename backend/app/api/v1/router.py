@@ -1,6 +1,6 @@
 """Aggregator for all v1 API routers.
 
-Each feature file (health.py, me.py, ingest.py, etc.) defines its own
+Each feature file (health.py, me.py, organizations.py, etc.) defines its own
 APIRouter. This file brings them all together under a single /api/v1 prefix.
 
 When you add a new feature:
@@ -11,8 +11,9 @@ When you add a new feature:
 
 from fastapi import APIRouter
 
-from app.api.v1 import health, me
+from app.api.v1 import health, me, organizations
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health.router)
 api_router.include_router(me.router)
+api_router.include_router(organizations.router)
