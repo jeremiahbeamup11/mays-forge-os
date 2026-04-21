@@ -32,22 +32,22 @@ Production-grade backend skeleton before any features.
 
 ---
 
-## Phase 2 — Authentication & Database 🔜 NEXT
+## Phase 2 — Authentication & Database ✅ COMPLETE
 
 Supabase integration + JWT auth + Row-Level Security. Required before any user data flows through the system.
 
 **Estimate:** 1–2 sessions.
 
-- [ ] Create Supabase project (free tier)
-- [ ] Populate real `.env` with Supabase URL + keys
-- [ ] Supabase client wrapper in `backend/app/db/client.py`
-- [ ] JWT verification utility in `backend/app/core/security.py`
-- [ ] `get_current_user` FastAPI dependency in `backend/app/api/deps.py`
-- [ ] First protected endpoint (`/api/v1/me` or similar)
-- [ ] Initial database schema: `users`, `organizations`, `memberships`
-- [ ] Row-Level Security policies on all tables
-- [ ] Auth tests: no token → 401, bad token → 401, valid token → 200
-- [ ] Document auth flow in `docs/AUTH.md`
+- [x] Create Supabase project (free tier)
+- [x] Populate real `.env` with Supabase URL + keys
+- [x] Supabase client wrapper in `backend/app/db/client.py`
+- [x] JWT verification utility in `backend/app/core/security.py`
+- [x] `get_current_user` FastAPI dependency in `backend/app/api/deps.py`
+- [x] First protected endpoint (`/api/v1/me` or similar)
+- [x] Initial database schema: `users`, `organizations`, `memberships`
+- [x] Row-Level Security policies on all tables
+- [x] Auth tests: no token → 401, bad token → 401, valid token → 200
+- [x] Document auth flow in `docs/AUTH.md`
 
 ---
 
@@ -169,3 +169,8 @@ Key choices and the reasoning. Append here when making architectural decisions.
 - **2026-04-18** — Pillar build order: Ingest → Blueprint → Analyze → Optimize. Ingest first because every other pillar depends on it; Blueprint second because it's the demo-able differentiator.
 - **2026-04-18** — Strict mypy from day one. Paying the typing tax upfront to catch bugs before runtime.
 - **2026-04-18** — Pytest on every commit via pre-commit. Will split fast/slow tiers when suite grows.
+- **2026-04-20** — Supabase CLI for migrations (vs. manual SQL in dashboard). Versioned SQL files in `supabase/migrations/` apply reproducibly to any environment.
+- **2026-04-20** — RLS as the authoritative tenant-isolation layer. API code also filters by tenant, but Postgres is the final enforcer. Verified manually via SQL Editor (see docs/RLS_VERIFICATION.md).
+- **2026-04-20** — Three-role hierarchy: `owner`, `admin`, `member`. Owners can delete orgs; admins+owners can update + manage memberships; members are read-only.
+- **2026-04-20** — Org creation open to any authenticated user. Auto-trigger makes the creator an `owner`. May gate behind invite codes later.
+- **2026-04-20** — Integration tests against live Supabase deferred to Phase 7 (deployment). For MVP, we use manual RLS verification (fast, no pollution) + mocked unit tests (test our Python code in isolation).
