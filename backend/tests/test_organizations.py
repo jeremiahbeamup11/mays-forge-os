@@ -217,3 +217,145 @@ class TestMineEndpointRobustness:
         response = await client.get(MINE_URL, headers={"Authorization": f"Bearer {token}"})
         assert response.status_code == 200
         assert len(response.json()["organizations"]) == 1
+
+
+class TestCreateOrganizationUnauthenticated:
+    """Creating an org requires auth."""
+
+    async def test_no_token_returns_401(self, client: AsyncClient) -> None:
+        response = await client.post("/api/v1/organizations", json={"name": "Peotone"})
+        assert response.status_code == 401
+
+    async def test_bad_token_returns_401(self, client: AsyncClient) -> None:
+        response = await client.post(
+            "/api/v1/organizations",
+            json={"name": "Peotone"},
+            headers={"Authorization": "Bearer garbage"},
+        )
+        assert response.status_code == 401
+
+
+class TestCreateOrganizationValidation:
+    """Client-side validation of the request body."""
+
+    async def test_missing_name_returns_422(
+        self, client: AsyncClient, make_token: TokenFactory
+    ) -> None:
+        token = make_token()
+        response = await client.post(
+            "/api/v1/organizations",
+            json={},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 422
+
+    async def test_blank_name_returns_422(
+        self, client: AsyncClient, make_token: TokenFactory
+    ) -> None:
+        token = make_token()
+        response = await client.post(
+            "/api/v1/organizations",
+            json={"name": "   "},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 422
+
+    async def test_bad_slug_format_returns_422(
+        self, client: AsyncClient, make_token: TokenFactory
+    ) -> None:
+        token = make_token()
+        response = await client.post(
+            "/api/v1/organizations",
+            json={"name": "Peotone", "slug": "Not A Valid Slug!"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 422
+
+
+class TestCreateOrganizationSuccess:
+    """Happy-path and slug-derivation behavior."""
+
+    async def test_creates_org_with_auto_slug(
+        self,
+        client: AsyncClient,
+        make_token: TokenFactory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def fake_create(*, access_token: str, name: str, slug: str) -> dict[str, Any]:
+            assert slug == "village-of-peotone"  # auto-derived
+            return {
+                "id": "33333333-3333-3333-3333-333333333333",
+                "name": name,
+                "slug": slug,
+                "created_at": "2026-04-20T00:00:00+00:00",
+                "updated_at": "2026-04-20T00:00:00+00:00",
+            }
+
+        monkeypatch.setattr("app.api.v1.organizations.create_organization", fake_create)
+
+        token = make_token()
+        response = await client.post(
+            "/api/v1/organizations",
+            json={"name": "Village of Peotone"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert data["organization"]["slug"] == "village-of-peotone"
+        assert data["organization"]["name"] == "Village of Peotone"
+        assert data["role"] == "owner"
+
+    async def test_creates_org_with_explicit_slug(
+        self,
+        client: AsyncClient,
+        make_token: TokenFactory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def fake_create(*, access_token: str, name: str, slug: str) -> dict[str, Any]:
+            assert slug == "peotone-il"
+            return {
+                "id": "44444444-4444-4444-4444-444444444444",
+                "name": name,
+                "slug": slug,
+                "created_at": "2026-04-20T00:00:00+00:00",
+                "updated_at": "2026-04-20T00:00:00+00:00",
+            }
+
+        monkeypatch.setattr("app.api.v1.organizations.create_organization", fake_create)
+
+        token = make_token()
+        response = await client.post(
+            "/api/v1/organizations",
+            json={"name": "Village of Peotone", "slug": "peotone-il"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 201
+        assert response.json()["organization"]["slug"] == "peotone-il"
+
+
+class TestCreateOrganizationConflict:
+    """Slug uniqueness is surfaced as 409 Conflict."""
+
+    async def test_duplicate_slug_returns_409(
+        self,
+        client: AsyncClient,
+        make_token: TokenFactory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from app.db.organizations import OrganizationSlugConflictError
+
+        async def fake_create(*, access_token: str, name: str, slug: str) -> dict[str, Any]:
+            raise OrganizationSlugConflictError(
+                f"An organization with slug '{slug}' already exists."
+            )
+
+        monkeypatch.setattr("app.api.v1.organizations.create_organization", fake_create)
+
+        token = make_token()
+        response = await client.post(
+            "/api/v1/organizations",
+            json={"name": "Peotone", "slug": "peotone-il"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 409
+        assert "already exists" in response.json()["message"].lower()

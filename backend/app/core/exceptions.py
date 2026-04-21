@@ -15,6 +15,7 @@ situations. We handle all three:
 """
 
 from fastapi import HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -71,21 +72,29 @@ async def validation_exception_handler(
     path params fail Pydantic validation. We return a consistent 422 with
     the field-level errors exposed — safe to expose since the client
     already sent the invalid data.
+
+    Pydantic's error details can contain non-JSON-serializable objects in
+    the `ctx` field (e.g., ValueError instances from custom validators).
+    We use jsonable_encoder to coerce everything into JSON-safe forms
+    before serialization.
     """
     request_id = getattr(request.state, "request_id", None)
+    errors = exc.errors()
     _log.info(
         "validation_error",
         path=request.url.path,
-        errors=exc.errors(),
+        errors=errors,
     )
     return JSONResponse(
         status_code=422,
-        content={
-            "error": "unprocessable_entity",
-            "message": "Request validation failed.",
-            "request_id": request_id,
-            "details": exc.errors(),
-        },
+        content=jsonable_encoder(
+            {
+                "error": "unprocessable_entity",
+                "message": "Request validation failed.",
+                "request_id": request_id,
+                "details": errors,
+            }
+        ),
     )
 
 
