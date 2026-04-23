@@ -5,7 +5,7 @@ The org_id is in the URL path, and RLS enforces that the caller is a
 member of that org — both at the storage layer and the database layer.
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -14,6 +14,8 @@ from app.api.deps import CurrentUser
 from app.core.logging import get_logger
 from app.db.files import create_file_record, get_file_by_id
 from app.models.file import FileRecord, FileUploadResponse
+from app.services.ai_analyzer import AnalysisError, AnalysisResult, analyze_csv
+from app.services.csv_parser import CsvParseError, parse_csv
 from app.services.file_validation import FileValidationError, validate_upload
 from app.services.storage import (
     BUCKET_NAME,
@@ -37,6 +39,99 @@ def _require_token(credentials: HTTPAuthorizationCredentials | None) -> str:
     return credentials.credentials
 
 
+async def _update_file_status(
+    access_token: str,
+    file_id: str,
+    *,
+    processing_status: str,
+    processing_error: str | None = None,
+    analysis: dict[str, Any] | None = None,
+) -> None:
+    """Update a file's processing status and optionally attach analysis."""
+    from app.db.organizations import get_user_scoped_client
+
+    client = get_user_scoped_client(access_token)
+    update: dict[str, Any] = {"processing_status": processing_status}
+    if processing_error is not None:
+        update["processing_error"] = processing_error
+    if analysis is not None:
+        update["analysis"] = analysis
+    client.table("files").update(update).eq("id", file_id).execute()
+
+
+async def _analyze_csv_file(
+    *,
+    file_bytes: bytes,
+    filename: str,
+    file_id: str,
+    access_token: str,
+) -> AnalysisResult | None:
+    """Parse and analyze a CSV file. Updates the file record with results.
+
+    Returns the AnalysisResult on success, None on failure.
+    Failures are logged and stored in the file record but do NOT cause
+    the upload endpoint to fail — the file is already stored successfully,
+    and analysis can be retried later.
+    """
+    # Phase 1: Parse
+    try:
+        await _update_file_status(access_token, file_id, processing_status="parsing")
+        summary = parse_csv(file_bytes, filename)
+    except CsvParseError as exc:
+        _log.warning("csv_parse_failed", file_id=file_id, error=str(exc))
+        await _update_file_status(
+            access_token,
+            file_id,
+            processing_status="failed",
+            processing_error=f"CSV parsing failed: {exc}",
+        )
+        return None
+
+    # Phase 2: Analyze with Claude
+    try:
+        await _update_file_status(access_token, file_id, processing_status="analyzing")
+        csv_context = summary.to_prompt_context()
+        result = await analyze_csv(csv_context, filename)
+    except AnalysisError as exc:
+        _log.warning("ai_analysis_failed", file_id=file_id, error=str(exc))
+        await _update_file_status(
+            access_token,
+            file_id,
+            processing_status="failed",
+            processing_error=f"AI analysis failed: {exc}",
+        )
+        return None
+
+    # Phase 3: Store the result
+    analysis_payload: dict[str, Any] = {
+        "result": result.analysis,
+        "metadata": {
+            "prompt_version": result.prompt_version,
+            "model": result.model,
+            "input_tokens": result.input_tokens,
+            "output_tokens": result.output_tokens,
+            "duration_seconds": result.duration_seconds,
+            "estimated_cost_usd": result.estimated_cost_usd,
+        },
+        "csv_summary": summary.to_dict(),
+    }
+
+    await _update_file_status(
+        access_token,
+        file_id,
+        processing_status="complete",
+        analysis=analysis_payload,
+    )
+
+    _log.info(
+        "file_analysis_stored",
+        file_id=file_id,
+        findings_count=len(result.analysis.get("findings", [])),
+        recommendations_count=len(result.analysis.get("recommendations", [])),
+    )
+    return result
+
+
 @router.post(
     "",
     response_model=FileUploadResponse,
@@ -45,8 +140,8 @@ def _require_token(credentials: HTTPAuthorizationCredentials | None) -> str:
     description=(
         "Accepts a multipart file upload, validates it against size and "
         "type policies, stores the bytes in Supabase Storage, and creates "
-        "a metadata record in the files table. Returns the file metadata "
-        "with processing_status='pending'."
+        "a metadata record in the files table. For CSV files, automatically "
+        "triggers AI analysis."
     ),
 )
 async def upload_org_file(
@@ -58,7 +153,7 @@ async def upload_org_file(
     """Upload a file to an organization."""
     token = _require_token(credentials)
 
-    # --- Read file bytes (enforces size limit implicitly) ---
+    # --- Read file bytes ---
     file_bytes = await file.read()
     size = len(file_bytes)
 
@@ -96,7 +191,7 @@ async def upload_org_file(
             detail="Failed to store file. Please try again.",
         ) from exc
 
-    # --- Create database record (user-scoped: RLS double-checks org membership) ---
+    # --- Create database record ---
     try:
         row = await create_file_record(
             access_token=token,
@@ -116,14 +211,22 @@ async def upload_org_file(
             filename=validated.safe_filename,
             error=str(exc),
         )
-        # TODO: clean up orphaned storage object. For now, accept the risk
-        # of an orphan — it's wasted space but not a security issue.
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to record file metadata.",
         ) from exc
 
     record = FileRecord(**row)
+
+    # --- Trigger analysis for CSV files (non-blocking on failure) ---
+    if validated.kind == "csv":
+        await _analyze_csv_file(
+            file_bytes=file_bytes,
+            filename=file.filename or validated.safe_filename,
+            file_id=record.id,
+            access_token=token,
+        )
+
     return FileUploadResponse.from_record(record)
 
 
@@ -151,8 +254,6 @@ async def get_org_file(
 
     record = FileRecord(**row)
 
-    # Extra safety: even if RLS somehow returned a row from another org
-    # (it shouldn't), reject it here. Belt and suspenders.
     if record.organization_id != org_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
