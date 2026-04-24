@@ -40,7 +40,7 @@ _log = get_logger(__name__)
 # Model selection. Sonnet is the sweet spot for this use case:
 # fast enough for interactive use, smart enough for real analysis,
 # cheap enough to not bankrupt a bootstrapped startup.
-_MODEL = "claude-sonnet-4-20250514"
+_MODEL = "claude-sonnet-4-6"
 
 # Cost per token for logging. Update if Anthropic changes pricing.
 _INPUT_COST_PER_MILLION = 3.00
