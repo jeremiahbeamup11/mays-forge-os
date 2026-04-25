@@ -57,19 +57,19 @@ Foundation of the OS. Every other pillar depends on this.
 
 **Estimate:** 2–3 sessions.
 
-- [ ] File upload endpoint with content type validation
-- [ ] Size limits (per file + per request)
-- [ ] Supabase Storage integration with per-org isolation
-- [ ] CSV parser → structured data
-- [ ] Image handler → Claude Vision analysis
-- [ ] PDF text extraction
-- [ ] Basic GIS file handling (GeoJSON first, then Shapefile)
-- [ ] Claude-powered city context inference from ingested data
-- [ ] Storage schema for parsed artifacts
-- [ ] Ingest API tests (valid uploads, malformed files, oversized files, wrong types)
-- [ ] Next.js frontend initialized in `frontend/`
-- [ ] Frontend upload UI with progress + error states
-- [ ] End-to-end test: upload CSV in browser → see parsed summary
+- [x] File upload endpoint with content type validation
+- [x] Size limits (per file + per request)
+- [x] Supabase Storage integration with per-org isolation
+- [x] CSV parser → structured data
+- [x] Image handler → Claude Vision analysis
+- [x] PDF text extraction
+- [x] Basic GIS file handling (GeoJSON first, then Shapefile)
+- [x] Claude-powered city context inference from ingested data
+- [x] Storage schema for parsed artifacts
+- [x] Ingest API tests (valid uploads, malformed files, oversized files, wrong types)
+- [x] Next.js frontend initialized in `frontend/`
+- [x] Frontend upload UI with progress + error states
+- [x] End-to-end test: upload CSV in browser → see parsed summary
 
 ---
 
@@ -174,3 +174,12 @@ Key choices and the reasoning. Append here when making architectural decisions.
 - **2026-04-20** — Three-role hierarchy: `owner`, `admin`, `member`. Owners can delete orgs; admins+owners can update + manage memberships; members are read-only.
 - **2026-04-20** — Org creation open to any authenticated user. Auto-trigger makes the creator an `owner`. May gate behind invite codes later.
 - **2026-04-20** — Integration tests against live Supabase deferred to Phase 7 (deployment). For MVP, we use manual RLS verification (fast, no pollution) + mocked unit tests (test our Python code in isolation).
+- **2026-04-21** — Anthropic (Claude) as primary AI provider over OpenAI and Gemini. Chosen for structured output quality via tool_use, professional writing register for municipal reports, and clean SDK. Gemini slot kept in config for future vision tasks if needed.
+- **2026-04-21** — Claude Sonnet 4.6 (`claude-sonnet-4-6`) as the default model. Best cost/quality tradeoff for structured municipal analysis. Haiku for cheap validation tasks and Opus for deep reasoning are deferred until needed.
+- **2026-04-21** — Tool use (forced function calling) for all AI output, never free-text JSON. Eliminates parsing errors and guarantees schema compliance. Every response matches a Pydantic-verifiable structure.
+- **2026-04-21** — Prompts are versioned code in `app/services/prompts/`, not inline strings. Enables A/B testing, rollback, and git-tracked iteration. Each prompt file includes version history and design principles.
+- **2026-04-21** — AI analysis failures do not fail file uploads. Files are stored and recorded with `processing_status='failed'` and error details. Analysis can be retried later without re-uploading.
+- **2026-04-21** — Every AI call logs model, token counts, duration, and estimated cost. Enables cost monitoring and optimization without external tooling.
+- **2026-04-21** — File upload allowlist (CSV, PDF, images, GeoJSON, plain text) with explicit rejection of executables, archives, and scripts. Deny-by-default reduces attack surface. Full magic-byte content sniffing deferred as a known gap.
+- **2026-04-21** — 25 MiB max upload size for v1. Conservative for Render free tier limits, sufficient for municipal CSVs and GIS files. Easy to raise later.
+- **2026-04-21** — CSV parser uses heuristic type inference (>70% numeric threshold), BOM-aware encoding, and dialect sniffing. Produces structured prompt context rather than sending raw CSV to Claude — keeps token usage low and reasoning quality high.
