@@ -226,5 +226,5 @@ class TestAiAnalyzerMocked:
 
         monkeypatch.setattr(ai_analyzer, "_get_client", lambda: mock_client)
 
-        with pytest.raises(ai_analyzer.AnalysisError, match="tool_use"):
+        with pytest.raises(ai_analyzer.AnalysisError, match="record_analysis"):
             await ai_analyzer.analyze_csv("some context", "test.csv")

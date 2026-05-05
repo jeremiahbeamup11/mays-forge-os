@@ -14,7 +14,7 @@ from app.api.deps import CurrentUser
 from app.core.logging import get_logger
 from app.db.files import create_file_record, get_file_by_id
 from app.models.file import FileRecord, FileUploadResponse
-from app.services.ai_analyzer import AnalysisError, AnalysisResult, analyze_csv
+from app.services.ai_analyzer import AnalysisError, AnalysisResult, analyze_csv, analyze_image
 from app.services.csv_parser import CsvParseError, parse_csv
 from app.services.file_validation import FileValidationError, validate_upload
 from app.services.storage import (
@@ -218,7 +218,7 @@ async def upload_org_file(
 
     record = FileRecord(**row)
 
-    # --- Trigger analysis for CSV files (non-blocking on failure) ---
+    # --- Trigger analysis (non-blocking on failure) ---
     if validated.kind == "csv":
         await _analyze_csv_file(
             file_bytes=file_bytes,
@@ -226,8 +226,69 @@ async def upload_org_file(
             file_id=record.id,
             access_token=token,
         )
+    elif validated.kind == "image":
+        await _analyze_image_file(
+            file_bytes=file_bytes,
+            content_type=validated.content_type,
+            filename=file.filename or validated.safe_filename,
+            file_id=record.id,
+            access_token=token,
+        )
 
     return FileUploadResponse.from_record(record)
+
+
+async def _analyze_image_file(
+    *,
+    file_bytes: bytes,
+    content_type: str,
+    filename: str,
+    file_id: str,
+    access_token: str,
+) -> AnalysisResult | None:
+    """Analyze an uploaded image with Claude Vision.
+
+    Same pattern as _analyze_csv_file: updates the file record with results,
+    never causes the upload to fail.
+    """
+    try:
+        await _update_file_status(access_token, file_id, processing_status="analyzing")
+        result = await analyze_image(file_bytes, content_type, filename)
+    except AnalysisError as exc:
+        _log.warning("image_analysis_failed", file_id=file_id, error=str(exc))
+        await _update_file_status(
+            access_token,
+            file_id,
+            processing_status="failed",
+            processing_error=f"Image analysis failed: {exc}",
+        )
+        return None
+
+    analysis_payload: dict[str, Any] = {
+        "result": result.analysis,
+        "metadata": {
+            "prompt_version": result.prompt_version,
+            "model": result.model,
+            "input_tokens": result.input_tokens,
+            "output_tokens": result.output_tokens,
+            "duration_seconds": result.duration_seconds,
+            "estimated_cost_usd": result.estimated_cost_usd,
+        },
+    }
+
+    await _update_file_status(
+        access_token,
+        file_id,
+        processing_status="complete",
+        analysis=analysis_payload,
+    )
+
+    _log.info(
+        "image_analysis_stored",
+        file_id=file_id,
+        observations_count=len(result.analysis.get("observations", [])),
+    )
+    return result
 
 
 @router.get(
