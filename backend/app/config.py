@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     JWT_SECRET: str = Field(
         ..., description="JWT secret from Supabase; used to verify access tokens"
     )
-    JWT_ALGORITHM: Literal["HS256"] = "HS256"
+    JWT_ALGORITHM: str = "ES256"
     JWT_AUDIENCE: str = "authenticated"
 
     # --- CORS ---

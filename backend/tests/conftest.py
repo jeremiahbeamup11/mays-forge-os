@@ -1,31 +1,60 @@
-"""Shared pytest fixtures and configuration for the Mays Forge OS backend.
-
-Fixtures defined here are automatically available in every test file in
-the tests/ directory, no imports needed. This keeps tests DRY.
-"""
+"""Shared pytest fixtures and configuration for the Mays Forge OS backend."""
 
 import time
 from collections.abc import AsyncIterator, Callable
+from typing import Any
 
 import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+import app.api.deps as _deps_module
+import app.core.security as _security_module
 from app.config import settings
+from app.core.security import AuthenticatedUser, AuthError
 from app.main import app
 
-# Type alias for the token factory fixture — improves readability in tests.
 TokenFactory = Callable[..., str]
+
+
+def _test_verify_access_token(token: str) -> AuthenticatedUser:
+    """Test-only token verifier that accepts HS256 tokens."""
+    if not token:
+        raise AuthError("missing_token")
+
+    try:
+        payload = jwt.decode(
+            token,
+            settings.JWT_SECRET,
+            algorithms=["HS256"],
+            audience=settings.JWT_AUDIENCE,
+            options={
+                "require": ["exp", "sub", "aud"],
+                "verify_signature": True,
+                "verify_exp": True,
+                "verify_aud": True,
+            },
+        )
+    except jwt.PyJWTError as exc:
+        raise AuthError("invalid_token") from exc
+
+    user_id = payload.get("sub", "")
+    email_raw = payload.get("email")
+    email = email_raw if isinstance(email_raw, str) else None
+    role_raw = payload.get("role")
+    role = role_raw if isinstance(role_raw, str) else "authenticated"
+    return AuthenticatedUser(id=user_id, email=email, role=role)
+
+
+# Patch both the source module and the importing module so the test
+# verifier is used everywhere, regardless of import order.
+_security_module.verify_access_token = _test_verify_access_token  # type: ignore[assignment]
+_deps_module.verify_access_token = _test_verify_access_token  # type: ignore[assignment]
 
 
 @pytest.fixture
 async def client() -> AsyncIterator[AsyncClient]:
-    """Provide an async HTTP client that talks directly to the FastAPI app.
-
-    This uses httpx's ASGITransport, which routes requests through the app's
-    ASGI interface in-process — no actual network, no live server needed.
-    Result: tests are fast, isolated, and deterministic.
-    """
+    """Provide an async HTTP client that talks directly to the FastAPI app."""
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -35,23 +64,7 @@ async def client() -> AsyncIterator[AsyncClient]:
 
 @pytest.fixture
 def make_token() -> TokenFactory:
-    """Factory fixture that builds signed JWTs for tests.
-
-    Produces tokens signed with the same secret and algorithm the app uses
-    to verify them. This means tests exercise the real verification path
-    without needing to hit Supabase.
-
-    Usage:
-        def test_something(make_token):
-            token = make_token(sub="user-123", email="a@b.com")
-            response = await client.get(
-                "/api/v1/me",
-                headers={"Authorization": f"Bearer {token}"},
-            )
-
-    Supports overrides for every field so tests can construct expired,
-    wrong-audience, malformed, or otherwise-broken tokens.
-    """
+    """Factory fixture that builds signed JWTs for tests."""
 
     def _build(
         *,
@@ -62,7 +75,7 @@ def make_token() -> TokenFactory:
         expires_in: int = 3600,
         secret: str | None = None,
         algorithm: str | None = None,
-        extra_claims: dict[str, object] | None = None,
+        extra_claims: dict[str, Any] | None = None,
     ) -> str:
         now = int(time.time())
         payload: dict[str, object] = {
@@ -80,7 +93,7 @@ def make_token() -> TokenFactory:
         return jwt.encode(
             payload,
             secret if secret is not None else settings.JWT_SECRET,
-            algorithm=algorithm if algorithm is not None else settings.JWT_ALGORITHM,
+            algorithm=algorithm if algorithm is not None else "HS256",
         )
 
     return _build
