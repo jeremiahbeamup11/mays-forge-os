@@ -8,6 +8,7 @@ member of that org — both at the storage layer and the database layer.
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.api.deps import CurrentUser
@@ -17,6 +18,7 @@ from app.models.file import FileRecord, FileUploadResponse
 from app.services.ai_analyzer import AnalysisError, AnalysisResult, analyze_csv, analyze_image
 from app.services.csv_parser import CsvParseError, parse_csv
 from app.services.file_validation import FileValidationError, validate_upload
+from app.services.report_generator import generate_csv_report, generate_image_report
 from app.services.storage import (
     BUCKET_NAME,
     StorageUploadError,
@@ -322,3 +324,80 @@ async def get_org_file(
         )
 
     return record
+
+
+@router.get(
+    "/{file_id}/report",
+    summary="Download analysis report as PDF",
+    description="Generates and returns a professional PDF report of the AI analysis.",
+    responses={
+        200: {"content": {"application/pdf": {}}, "description": "PDF report"},
+        404: {"description": "File not found or analysis not complete"},
+    },
+)
+async def download_report(
+    org_id: str,
+    file_id: str,
+    _user: CurrentUser,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> Response:
+    """Generate and download a PDF report for a completed analysis."""
+    token = _require_token(credentials)
+
+    row = await get_file_by_id(access_token=token, file_id=file_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"File '{file_id}' not found.",
+        )
+
+    record = FileRecord(**row)
+
+    if record.organization_id != org_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"File '{file_id}' not found.",
+        )
+
+    if record.processing_status != "complete" or record.analysis is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Analysis is not yet complete for this file.",
+        )
+
+    # TODO: fetch org name from database. For now, use org_id.
+    org_name = "Village of Peotone"
+
+    raw_result = record.analysis.get("result") if isinstance(record.analysis, dict) else None
+    raw_meta = record.analysis.get("metadata") if isinstance(record.analysis, dict) else None
+    result: dict[str, Any] = raw_result if isinstance(raw_result, dict) else {}
+    meta: dict[str, Any] = raw_meta if isinstance(raw_meta, dict) else {}
+
+    if record.kind == "csv":
+        pdf_bytes = generate_csv_report(
+            org_name=org_name,
+            filename=record.original_filename,
+            analysis=result,
+            metadata=meta,
+        )
+    elif record.kind == "image":
+        pdf_bytes = generate_image_report(
+            org_name=org_name,
+            filename=record.original_filename,
+            analysis=result,
+            metadata=meta,
+        )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"PDF reports are not yet supported for '{record.kind}' files.",
+        )
+
+    safe_name = record.original_filename.rsplit(".", 1)[0]
+    pdf_filename = f"{safe_name}_analysis_report.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{pdf_filename}"'},
+    )

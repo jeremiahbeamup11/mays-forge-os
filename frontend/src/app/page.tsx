@@ -199,9 +199,34 @@ export default function Home() {
                   {file.analysis.metadata.model}
                 </p>
               </div>
-              <Button variant="outline" onClick={reset}>
-                Analyze Another
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="default"
+                  onClick={() => {
+                    const url = `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1/organizations/${DEMO_ORG_ID}/files/${file.id}/report`;
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.setAttribute("download", "");
+                    // Add auth header via fetch + blob
+                    fetch(url, {
+                      headers: { Authorization: `Bearer ${DEMO_TOKEN}` },
+                    })
+                      .then((res) => res.blob())
+                      .then((blob) => {
+                        const blobUrl = URL.createObjectURL(blob);
+                        a.href = blobUrl;
+                        a.download = `${file.original_filename.replace(/\.[^/.]+$/, "")}_report.pdf`;
+                        a.click();
+                        URL.revokeObjectURL(blobUrl);
+                      });
+                  }}
+                >
+                  Download Report
+                </Button>
+                <Button variant="outline" onClick={reset}>
+                  Analyze Another
+                </Button>
+              </div>
             </div>
 
             {/* Render based on file kind */}
