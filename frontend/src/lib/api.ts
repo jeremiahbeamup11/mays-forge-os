@@ -25,7 +25,7 @@ export interface FileRecord {
 export interface AnalysisPayload {
   result: CsvAnalysis | ImageAnalysis;
   metadata: AnalysisMetadata;
-  csv_summary?: CsvSummary;
+  csv_summary?: Record<string, unknown>;
 }
 
 export interface AnalysisMetadata {
