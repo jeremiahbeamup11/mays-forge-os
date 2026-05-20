@@ -15,7 +15,13 @@ from app.api.deps import CurrentUser
 from app.core.logging import get_logger
 from app.db.files import create_file_record, get_file_by_id
 from app.models.file import FileRecord, FileUploadResponse
-from app.services.ai_analyzer import AnalysisError, AnalysisResult, analyze_csv, analyze_image
+from app.services.ai_analyzer import (
+    AnalysisError,
+    AnalysisResult,
+    analyze_csv,
+    analyze_image,
+    generate_blueprint,
+)
 from app.services.csv_parser import CsvParseError, parse_csv
 from app.services.file_validation import FileValidationError, validate_upload
 from app.services.report_generator import generate_csv_report, generate_image_report
@@ -248,14 +254,16 @@ async def _analyze_image_file(
     file_id: str,
     access_token: str,
 ) -> AnalysisResult | None:
-    """Analyze an uploaded image with Claude Vision.
+    """Analyze an uploaded image with Claude Vision, then generate a blueprint.
 
-    Same pattern as _analyze_csv_file: updates the file record with results,
-    never causes the upload to fail.
+    Two-stage pipeline:
+    1. Image analysis — what does the site look like?
+    2. Blueprint generation — what should we build here?
     """
+    # Stage 1: Image analysis
     try:
         await _update_file_status(access_token, file_id, processing_status="analyzing")
-        result = await analyze_image(file_bytes, content_type, filename)
+        image_result = await analyze_image(file_bytes, content_type, filename)
     except AnalysisError as exc:
         _log.warning("image_analysis_failed", file_id=file_id, error=str(exc))
         await _update_file_status(
@@ -266,17 +274,39 @@ async def _analyze_image_file(
         )
         return None
 
+    # Stage 2: Blueprint generation
+    blueprint_result = None
+    try:
+        blueprint_result = await generate_blueprint(
+            image_analysis=image_result.analysis,
+            filename=filename,
+        )
+    except AnalysisError as exc:
+        _log.warning("blueprint_generation_failed", file_id=file_id, error=str(exc))
+        # Don't fail the whole thing — store what we have
+
     analysis_payload: dict[str, Any] = {
-        "result": result.analysis,
+        "result": image_result.analysis,
         "metadata": {
-            "prompt_version": result.prompt_version,
-            "model": result.model,
-            "input_tokens": result.input_tokens,
-            "output_tokens": result.output_tokens,
-            "duration_seconds": result.duration_seconds,
-            "estimated_cost_usd": result.estimated_cost_usd,
+            "prompt_version": image_result.prompt_version,
+            "model": image_result.model,
+            "input_tokens": image_result.input_tokens,
+            "output_tokens": image_result.output_tokens,
+            "duration_seconds": image_result.duration_seconds,
+            "estimated_cost_usd": image_result.estimated_cost_usd,
         },
     }
+
+    if blueprint_result:
+        analysis_payload["blueprint"] = blueprint_result.analysis
+        analysis_payload["blueprint_metadata"] = {
+            "prompt_version": blueprint_result.prompt_version,
+            "model": blueprint_result.model,
+            "input_tokens": blueprint_result.input_tokens,
+            "output_tokens": blueprint_result.output_tokens,
+            "duration_seconds": blueprint_result.duration_seconds,
+            "estimated_cost_usd": blueprint_result.estimated_cost_usd,
+        }
 
     await _update_file_status(
         access_token,
@@ -288,9 +318,10 @@ async def _analyze_image_file(
     _log.info(
         "image_analysis_stored",
         file_id=file_id,
-        observations_count=len(result.analysis.get("observations", [])),
+        observations_count=len(image_result.analysis.get("observations", [])),
+        has_blueprint=blueprint_result is not None,
     )
-    return result
+    return image_result
 
 
 @router.get(

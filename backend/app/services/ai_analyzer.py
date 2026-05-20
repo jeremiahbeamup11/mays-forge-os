@@ -23,6 +23,16 @@ import anthropic
 
 from app.config import settings
 from app.core.logging import get_logger
+from app.services.prompts.blueprint_v1 import (
+    BLUEPRINT_TOOL_SCHEMA,
+    build_blueprint_prompt,
+)
+from app.services.prompts.blueprint_v1 import (
+    PROMPT_VERSION as BLUEPRINT_PROMPT_VERSION,
+)
+from app.services.prompts.blueprint_v1 import (
+    SYSTEM_PROMPT as BLUEPRINT_SYSTEM_PROMPT,
+)
 from app.services.prompts.csv_analysis_v1 import (
     ANALYSIS_TOOL_SCHEMA as CSV_TOOL_SCHEMA,
 )
@@ -300,6 +310,96 @@ async def analyze_image(
     return AnalysisResult(
         analysis=analysis_data,
         prompt_version=IMAGE_PROMPT_VERSION,
+        model=_MODEL,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        duration_seconds=duration,
+        estimated_cost_usd=estimated_cost,
+    )
+
+
+async def generate_blueprint(
+    *,
+    image_analysis: dict[str, Any],
+    filename: str = "unknown.jpg",
+) -> AnalysisResult:
+    """Generate a redevelopment blueprint from an image analysis result.
+
+    Args:
+        image_analysis: The 'result' dict from a completed image analysis.
+        filename: Original filename, for logging.
+
+    Returns:
+        AnalysisResult with the blueprint data.
+    """
+    client = _get_client()
+
+    condition = image_analysis.get("condition_assessment", {})
+    user_prompt = build_blueprint_prompt(
+        site_type=image_analysis.get("site_type", "unknown"),
+        condition=condition.get("overall_condition", "unknown"),
+        scene_description=image_analysis.get("scene_description", ""),
+        observations=image_analysis.get("observations", []),
+        opportunities=image_analysis.get("sustainability_opportunities", []),
+        characteristics=image_analysis.get("estimated_characteristics", {}),
+    )
+
+    _log.info(
+        "ai_analysis_starting",
+        filename=filename,
+        model=_MODEL,
+        prompt_version=BLUEPRINT_PROMPT_VERSION,
+        analysis_type="blueprint",
+    )
+
+    start = time.perf_counter()
+
+    try:
+        response = client.messages.create(  # type: ignore[call-overload]
+            model=_MODEL,
+            max_tokens=4096,
+            system=BLUEPRINT_SYSTEM_PROMPT,
+            tools=[
+                {
+                    "type": "custom",
+                    "name": BLUEPRINT_TOOL_SCHEMA["name"],
+                    "description": BLUEPRINT_TOOL_SCHEMA["description"],
+                    "input_schema": BLUEPRINT_TOOL_SCHEMA["input_schema"],
+                },
+            ],
+            tool_choice={"type": "tool", "name": "record_blueprint"},
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+    except anthropic.AuthenticationError as exc:
+        raise AnalysisError("auth_failed", "Anthropic API key is invalid.") from exc
+    except anthropic.RateLimitError as exc:
+        raise AnalysisError("rate_limited", "Rate limit hit.") from exc
+    except anthropic.APIError as exc:
+        raise AnalysisError("api_error", f"API error: {exc}") from exc
+
+    duration = round(time.perf_counter() - start, 2)
+    blueprint_data = _extract_tool_result(response, "record_blueprint")
+
+    input_tokens = response.usage.input_tokens
+    output_tokens = response.usage.output_tokens
+    estimated_cost = _compute_cost(input_tokens, output_tokens)
+
+    _log.info(
+        "ai_analysis_complete",
+        filename=filename,
+        model=_MODEL,
+        prompt_version=BLUEPRINT_PROMPT_VERSION,
+        analysis_type="blueprint",
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        duration_seconds=duration,
+        estimated_cost_usd=estimated_cost,
+        phases_count=len(blueprint_data.get("phases", [])),
+    )
+
+    return AnalysisResult(
+        analysis=blueprint_data,
+        prompt_version=BLUEPRINT_PROMPT_VERSION,
         model=_MODEL,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
