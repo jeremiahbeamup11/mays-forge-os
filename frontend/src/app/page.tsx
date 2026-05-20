@@ -12,6 +12,7 @@ import {
   type FileRecord,
   type CsvAnalysis,
   type ImageAnalysis,
+  type Blueprint,
 } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import type { Session } from "@supabase/supabase-js";
@@ -353,7 +354,13 @@ export default function Home() {
             {file.kind === "csv" ? (
               <CsvResults analysis={file.analysis.result as CsvAnalysis} />
             ) : file.kind === "image" ? (
-              <ImageResults analysis={file.analysis.result as ImageAnalysis} />
+              <>
+                <ImageResults analysis={file.analysis.result as ImageAnalysis} />
+
+                {file.analysis.blueprint && (
+                  <BlueprintResults blueprint={file.analysis.blueprint} />
+                )}
+              </>
             ) : (
               <Card>
                 <CardContent className="py-8 text-center text-muted-foreground">
@@ -632,6 +639,129 @@ function ImageResults({ analysis }: { analysis: ImageAnalysis }) {
         </Card>
       </TabsContent>
     </Tabs>
+  );
+}
+// ============================================================================
+// Blueprint Results Component
+// ============================================================================
+
+function BlueprintResults({ blueprint }: { blueprint: Blueprint }) {
+  return (
+    <div className="space-y-4">
+      <Separator />
+      <div>
+        <h2 className="text-lg font-semibold">{blueprint.concept_name}</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Redevelopment Blueprint • {blueprint.estimated_total_cost}
+        </p>
+      </div>
+
+      <Card>
+        <CardContent className="pt-6">
+          <p className="text-sm leading-relaxed">{blueprint.vision_statement}</p>
+        </CardContent>
+      </Card>
+
+      <Tabs defaultValue="phases" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="phases">
+            Phases ({blueprint.phases.length})
+          </TabsTrigger>
+          <TabsTrigger value="sustainability">
+            Sustainability ({blueprint.sustainability_features.length})
+          </TabsTrigger>
+          <TabsTrigger value="funding">Funding</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="phases" className="space-y-3">
+          {blueprint.phases.map((phase) => (
+            <Card key={phase.phase_number}>
+              <CardContent className="pt-6">
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="text-xs">
+                      Phase {phase.phase_number}
+                    </Badge>
+                    <span className="font-medium text-sm">{phase.name}</span>
+                    <span className="text-xs text-muted-foreground ml-auto">
+                      {phase.timeline} • {phase.estimated_cost}
+                    </span>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    {phase.description}
+                  </p>
+                  <ul className="space-y-1">
+                    {phase.key_elements.map((elem, i) => (
+                      <li
+                        key={i}
+                        className="text-sm text-muted-foreground pl-4 border-l-2 border-muted"
+                      >
+                        {elem}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </TabsContent>
+
+        <TabsContent value="sustainability" className="space-y-3">
+          {blueprint.sustainability_features.map((sf, i) => (
+            <Card key={i}>
+              <CardContent className="pt-6">
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="text-xs shrink-0">
+                    Phase {sf.phase}
+                  </Badge>
+                  <div className="space-y-1 min-w-0">
+                    <h3 className="font-medium text-sm">{sf.feature}</h3>
+                    <p className="text-sm text-muted-foreground">{sf.benefit}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </TabsContent>
+
+        <TabsContent value="funding">
+          <Card>
+            <CardContent className="pt-6 space-y-4">
+              <div className="space-y-3">
+                {blueprint.funding_strategy.sources.map((src, i) => (
+                  <div key={i} className="flex items-start gap-3">
+                    <Badge
+                      className={`text-xs shrink-0 ${
+                        src.likelihood === "high"
+                          ? "bg-green-600 text-white"
+                          : src.likelihood === "medium"
+                            ? "bg-blue-500 text-white"
+                            : "bg-slate-400 text-white"
+                      }`}
+                    >
+                      {src.likelihood}
+                    </Badge>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">{src.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {src.amount}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <Separator />
+              <div>
+                <p className="text-sm font-medium mb-1">Funding Strategy</p>
+                <p className="text-sm text-muted-foreground">
+                  {blueprint.funding_strategy.approach}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
   );
 }
 

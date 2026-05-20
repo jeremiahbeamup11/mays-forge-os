@@ -26,6 +26,8 @@ export interface AnalysisPayload {
   result: CsvAnalysis | ImageAnalysis;
   metadata: AnalysisMetadata;
   csv_summary?: Record<string, unknown>;
+  blueprint?: Blueprint;
+  blueprint_metadata?: AnalysisMetadata;
 }
 
 export interface AnalysisMetadata {
@@ -172,4 +174,39 @@ export async function pollFileUntilDone(
     await new Promise((r) => setTimeout(r, intervalMs));
   }
   throw new Error("Analysis timed out after 2 minutes.");
+}
+// Blueprint types
+export interface Blueprint {
+  concept_name: string;
+  vision_statement: string;
+  phases: BlueprintPhase[];
+  sustainability_features: SustainabilityFeature[];
+  funding_strategy: FundingStrategy;
+  estimated_total_cost: string;
+}
+
+export interface BlueprintPhase {
+  phase_number: number;
+  name: string;
+  description: string;
+  key_elements: string[];
+  estimated_cost: string;
+  timeline: string;
+}
+
+export interface SustainabilityFeature {
+  feature: string;
+  benefit: string;
+  phase: number;
+}
+
+export interface FundingStrategy {
+  sources: FundingSource[];
+  approach: string;
+}
+
+export interface FundingSource {
+  name: string;
+  amount: string;
+  likelihood: "high" | "medium" | "low";
 }
