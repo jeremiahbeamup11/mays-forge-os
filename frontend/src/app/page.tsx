@@ -1,12 +1,11 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   uploadFile,
   pollFileUntilDone,
@@ -14,52 +13,94 @@ import {
   type CsvAnalysis,
   type ImageAnalysis,
 } from "@/lib/api";
+import { supabase } from "@/lib/supabase";
+import type { Session } from "@supabase/supabase-js";
 
-// Hardcoded for demo — replace with real auth later
-const DEMO_TOKEN = process.env.NEXT_PUBLIC_DEMO_TOKEN || "";
 const DEMO_ORG_ID = process.env.NEXT_PUBLIC_DEMO_ORG_ID || "";
 
 type UploadState = "idle" | "uploading" | "analyzing" | "complete" | "error";
 
 export default function Home() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
+
   const [state, setState] = useState<UploadState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [file, setFile] = useState<FileRecord | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
-  const handleUpload = useCallback(async (selectedFile: File) => {
-    if (!DEMO_TOKEN || !DEMO_ORG_ID) {
-      setError(
-        "Demo credentials not configured. Set NEXT_PUBLIC_DEMO_TOKEN and NEXT_PUBLIC_DEMO_ORG_ID in .env.local"
-      );
-      setState("error");
-      return;
-    }
+  // Check for existing session on mount
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      setSession(s);
+      setAuthLoading(false);
+    });
 
-    setState("uploading");
-    setError(null);
-    setFile(null);
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s);
+    });
 
-    try {
-      const uploaded = await uploadFile(DEMO_ORG_ID, selectedFile, DEMO_TOKEN);
-      setState("analyzing");
-
-      const result = await pollFileUntilDone(
-        DEMO_ORG_ID,
-        uploaded.id,
-        DEMO_TOKEN
-      );
-
-      setFile(result);
-      setState(result.processing_status === "complete" ? "complete" : "error");
-      if (result.processing_status === "failed") {
-        setError(result.processing_error || "Analysis failed.");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
-      setState("error");
-    }
+    return () => subscription.unsubscribe();
   }, []);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+
+    const { error: err } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (err) {
+      setAuthError(err.message);
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setSession(null);
+    setState("idle");
+    setFile(null);
+  };
+
+  const token = session?.access_token || "";
+
+  const handleUpload = useCallback(
+    async (selectedFile: File) => {
+      if (!token || !DEMO_ORG_ID) {
+        setError("Not authenticated or org not configured.");
+        setState("error");
+        return;
+      }
+
+      setState("uploading");
+      setError(null);
+      setFile(null);
+
+      try {
+        const uploaded = await uploadFile(DEMO_ORG_ID, selectedFile, token);
+        setState("analyzing");
+
+        const result = await pollFileUntilDone(DEMO_ORG_ID, uploaded.id, token);
+
+        setFile(result);
+        setState(result.processing_status === "complete" ? "complete" : "error");
+        if (result.processing_status === "failed") {
+          setError(result.processing_error || "Analysis failed.");
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Something went wrong.");
+        setState("error");
+      }
+    },
+    [token]
+  );
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -85,6 +126,83 @@ export default function Home() {
     setFile(null);
   };
 
+  // Loading state
+  if (authLoading) {
+    return (
+      <main className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-muted-foreground">Loading...</p>
+      </main>
+    );
+  }
+
+  // Login screen
+  if (!session) {
+    return (
+      <main className="min-h-screen bg-background">
+        <div className="border-b">
+          <div className="mx-auto max-w-5xl px-6 py-4">
+            <h1 className="text-xl font-bold tracking-tight">Mays Forge OS</h1>
+            <p className="text-sm text-muted-foreground">
+              Urban sustainability intelligence
+            </p>
+          </div>
+        </div>
+
+        <div className="mx-auto max-w-md px-6 py-16">
+          <Card>
+            <CardHeader>
+              <CardTitle>Sign in</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Enter your credentials to access the platform.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium" htmlFor="email">
+                    Email
+                  </label>
+                  <input
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    placeholder="you@example.com"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium" htmlFor="password">
+                    Password
+                  </label>
+                  <input
+                    id="password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    placeholder="••••••••"
+                  />
+                </div>
+
+                {authError && (
+                  <div className="p-3 rounded-md bg-destructive/10 text-destructive text-sm">
+                    {authError}
+                  </div>
+                )}
+
+                <Button className="w-full" onClick={handleLogin}>
+                  Sign In
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </main>
+    );
+  }
+
+  // Authenticated — main app
   return (
     <main className="min-h-screen bg-background">
       {/* Header */}
@@ -96,9 +214,14 @@ export default function Home() {
               Urban sustainability intelligence
             </p>
           </div>
-          <Badge variant="outline" className="text-xs">
-            v0.1.0
-          </Badge>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground">
+              {session.user.email}
+            </span>
+            <Button variant="ghost" size="sm" onClick={handleLogout}>
+              Sign Out
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -109,7 +232,8 @@ export default function Home() {
             <CardHeader>
               <CardTitle>Analyze City Data</CardTitle>
               <p className="text-sm text-muted-foreground">
-                Upload a CSV of municipal data or a photo of a site for AI-powered analysis.
+                Upload a CSV of municipal data or a photo of a site for
+                AI-powered analysis.
               </p>
             </CardHeader>
             <CardContent>
@@ -123,9 +247,10 @@ export default function Home() {
                 className={`
                   border-2 border-dashed rounded-lg p-12 text-center
                   transition-colors cursor-pointer
-                  ${dragOver
-                    ? "border-primary bg-primary/5"
-                    : "border-muted-foreground/25 hover:border-primary/50"
+                  ${
+                    dragOver
+                      ? "border-primary bg-primary/5"
+                      : "border-muted-foreground/25 hover:border-primary/50"
                   }
                 `}
               >
@@ -188,7 +313,6 @@ export default function Home() {
         {/* Results */}
         {state === "complete" && file?.analysis && (
           <div className="space-y-6">
-            {/* Results header */}
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold">Analysis Complete</h2>
@@ -204,16 +328,13 @@ export default function Home() {
                   variant="default"
                   onClick={() => {
                     const url = `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v1/organizations/${DEMO_ORG_ID}/files/${file.id}/report`;
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.setAttribute("download", "");
-                    // Add auth header via fetch + blob
                     fetch(url, {
-                      headers: { Authorization: `Bearer ${DEMO_TOKEN}` },
+                      headers: { Authorization: `Bearer ${token}` },
                     })
                       .then((res) => res.blob())
                       .then((blob) => {
                         const blobUrl = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
                         a.href = blobUrl;
                         a.download = `${file.original_filename.replace(/\.[^/.]+$/, "")}_report.pdf`;
                         a.click();
@@ -229,7 +350,6 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Render based on file kind */}
             {file.kind === "csv" ? (
               <CsvResults analysis={file.analysis.result as CsvAnalysis} />
             ) : file.kind === "image" ? (
@@ -265,7 +385,6 @@ function CsvResults({ analysis }: { analysis: CsvAnalysis }) {
         <TabsTrigger value="quality">Data Quality</TabsTrigger>
       </TabsList>
 
-      {/* Summary always visible */}
       <Card>
         <CardContent className="pt-6">
           <p className="text-sm leading-relaxed">{analysis.summary}</p>
@@ -384,18 +503,23 @@ function ImageResults({ analysis }: { analysis: ImageAnalysis }) {
         <TabsTrigger value="condition">Condition</TabsTrigger>
       </TabsList>
 
-      {/* Scene description always visible */}
       <Card>
         <CardContent className="pt-6">
           <div className="flex items-center gap-2 mb-2">
-            <Badge variant="outline">{analysis.site_type.replace(/_/g, " ")}</Badge>
+            <Badge variant="outline">
+              {analysis.site_type.replace(/_/g, " ")}
+            </Badge>
             <Badge
-              className={conditionColor(analysis.condition_assessment.overall_condition)}
+              className={conditionColor(
+                analysis.condition_assessment.overall_condition
+              )}
             >
               {analysis.condition_assessment.overall_condition}
             </Badge>
           </div>
-          <p className="text-sm leading-relaxed">{analysis.scene_description}</p>
+          <p className="text-sm leading-relaxed">
+            {analysis.scene_description}
+          </p>
         </CardContent>
       </Card>
 
@@ -471,23 +595,33 @@ function ImageResults({ analysis }: { analysis: ImageAnalysis }) {
                       </p>
                     </div>
                   )}
-                  {analysis.estimated_characteristics.vegetation_coverage_pct != null && (
+                  {analysis.estimated_characteristics
+                    .vegetation_coverage_pct != null && (
                     <div>
                       <p className="text-xs text-muted-foreground">
                         Vegetation
                       </p>
                       <p className="text-sm font-medium">
-                        {analysis.estimated_characteristics.vegetation_coverage_pct}%
+                        {
+                          analysis.estimated_characteristics
+                            .vegetation_coverage_pct
+                        }
+                        %
                       </p>
                     </div>
                   )}
-                  {analysis.estimated_characteristics.impervious_surface_pct != null && (
+                  {analysis.estimated_characteristics
+                    .impervious_surface_pct != null && (
                     <div>
                       <p className="text-xs text-muted-foreground">
                         Impervious Surface
                       </p>
                       <p className="text-sm font-medium">
-                        {analysis.estimated_characteristics.impervious_surface_pct}%
+                        {
+                          analysis.estimated_characteristics
+                            .impervious_surface_pct
+                        }
+                        %
                       </p>
                     </div>
                   )}
