@@ -420,14 +420,25 @@ export default function Home() {
                     fetch(url, {
                       headers: { Authorization: `Bearer ${token}` },
                     })
-                      .then((res) => res.blob())
+                      .then((res) => {
+                        if (!res.ok) {
+                          throw new Error(`Report download failed (${res.status})`);
+                        }
+                        return res.blob();
+                      })
                       .then((blob) => {
                         const blobUrl = URL.createObjectURL(blob);
                         const a = document.createElement("a");
                         a.href = blobUrl;
                         a.download = `${file.original_filename.replace(/\.[^/.]+$/, "")}_report.pdf`;
+                        document.body.appendChild(a);
                         a.click();
+                        document.body.removeChild(a);
                         URL.revokeObjectURL(blobUrl);
+                      })
+                      .catch((err) => {
+                        console.error("Report download error:", err);
+                        setError(err instanceof Error ? err.message : "Report download failed.");
                       });
                   }}
                 >
