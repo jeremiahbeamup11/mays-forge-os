@@ -9,6 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import {
   uploadFile,
   pollFileUntilDone,
+  listFiles,
   type FileRecord,
   type CsvAnalysis,
   type ImageAnalysis,
@@ -32,6 +33,8 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [file, setFile] = useState<FileRecord | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [history, setHistory] = useState<FileRecord[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   // Check for existing session on mount
   useEffect(() => {
@@ -72,6 +75,25 @@ export default function Home() {
 
   const token = session?.access_token || "";
 
+  const loadHistory = useCallback(async () => {
+    if (!token || !DEMO_ORG_ID) return;
+    setHistoryLoading(true);
+    try {
+      const files = await listFiles(DEMO_ORG_ID, token);
+      setHistory(files);
+    } catch (err) {
+      console.error("Failed to load history:", err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (session) {
+      loadHistory();
+    }
+  }, [session, loadHistory]);
+
   const handleUpload = useCallback(
     async (selectedFile: File) => {
       if (!token || !DEMO_ORG_ID) {
@@ -95,12 +117,13 @@ export default function Home() {
         if (result.processing_status === "failed") {
           setError(result.processing_error || "Analysis failed.");
         }
+        loadHistory();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Something went wrong.");
         setState("error");
       }
     },
-    [token]
+    [token, loadHistory]
   );
 
   const handleDrop = useCallback(
@@ -282,6 +305,71 @@ export default function Home() {
               {error && (
                 <div className="mt-4 p-3 rounded-md bg-destructive/10 text-destructive text-sm">
                   {error}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* File History */}
+        {history.length > 0 && (state === "idle" || state === "error") && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Past Analyses</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Click any completed analysis to view results.
+              </p>
+            </CardHeader>
+            <CardContent>
+              {historyLoading ? (
+                <p className="text-sm text-muted-foreground">Loading...</p>
+              ) : (
+                <div className="space-y-2">
+                  {history.map((f) => (
+                    <div
+                      key={f.id}
+                      className={`flex items-center justify-between p-3 rounded-md border ${
+                        f.processing_status === "complete"
+                          ? "cursor-pointer hover:bg-muted/50"
+                          : ""
+                      }`}
+                      onClick={() => {
+                        if (f.processing_status === "complete" && f.analysis) {
+                          setFile(f);
+                          setState("complete");
+                        }
+                      }}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-lg">
+                          {f.kind === "csv"
+                            ? "\u{1F4CA}"
+                            : f.kind === "image"
+                              ? "\u{1F4F7}"
+                              : "\u{1F4C4}"}
+                        </span>
+                        <div>
+                          <p className="text-sm font-medium">
+                            {f.original_filename}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(f.created_at).toLocaleDateString()} &bull;{" "}
+                            {f.kind}
+                          </p>
+                        </div>
+                      </div>
+                      <Badge
+                        variant={
+                          f.processing_status === "complete"
+                            ? "default"
+                            : "secondary"
+                        }
+                        className="text-xs"
+                      >
+                        {f.processing_status}
+                      </Badge>
+                    </div>
+                  ))}
                 </div>
               )}
             </CardContent>

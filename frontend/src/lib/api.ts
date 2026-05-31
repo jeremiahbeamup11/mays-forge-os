@@ -136,6 +136,23 @@ export async function uploadFile(
 }
 
 /**
+ * List all files for an organization, newest first.
+ */
+export async function listFiles(
+  orgId: string,
+  token: string
+): Promise<FileRecord[]> {
+  const res = await fetch(
+    `${API_BASE}/api/v1/organizations/${orgId}/files`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to list files (${res.status})`);
+  }
+  return res.json();
+}
+
+/**
  * Fetch a single file's metadata + analysis.
  */
 export async function getFile(

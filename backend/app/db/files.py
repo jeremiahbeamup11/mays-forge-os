@@ -69,6 +69,26 @@ async def create_file_record(
     return cast(dict[str, Any], data[0])
 
 
+async def get_files_by_org(
+    *,
+    access_token: str,
+    organization_id: str,
+) -> list[dict[str, Any]]:
+    """Fetch all files for an organization, newest first. RLS scopes results."""
+    client = get_user_scoped_client(access_token)
+    response = (
+        client.table("files")
+        .select("*")
+        .eq("organization_id", organization_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    data = response.data
+    if not isinstance(data, list):
+        return []
+    return cast(list[dict[str, Any]], data)
+
+
 async def get_file_by_id(
     *,
     access_token: str,

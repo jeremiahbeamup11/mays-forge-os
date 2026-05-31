@@ -13,7 +13,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.api.deps import CurrentUser
 from app.core.logging import get_logger
-from app.db.files import create_file_record, get_file_by_id
+from app.db.files import create_file_record, get_file_by_id, get_files_by_org
 from app.models.file import FileRecord, FileUploadResponse
 from app.services.ai_analyzer import (
     AnalysisError,
@@ -138,6 +138,22 @@ async def _analyze_csv_file(
         recommendations_count=len(result.analysis.get("recommendations", [])),
     )
     return result
+
+
+@router.get(
+    "",
+    response_model=list[FileRecord],
+    summary="List all files for an organization",
+)
+async def list_org_files(
+    org_id: str,
+    _user: CurrentUser,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> list[FileRecord]:
+    """List all files for an organization, newest first."""
+    token = _require_token(credentials)
+    rows = await get_files_by_org(access_token=token, organization_id=org_id)
+    return [FileRecord(**row) for row in rows]
 
 
 @router.post(
