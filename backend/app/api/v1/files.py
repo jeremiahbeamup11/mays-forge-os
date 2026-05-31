@@ -412,11 +412,18 @@ async def download_report(
             metadata=meta,
         )
     elif record.kind == "image":
+        raw_blueprint = (
+            record.analysis.get("blueprint") if isinstance(record.analysis, dict) else None
+        )
+        blueprint_data: dict[str, Any] | None = (
+            raw_blueprint if isinstance(raw_blueprint, dict) else None
+        )
         pdf_bytes = generate_image_report(
             org_name=org_name,
             filename=record.original_filename,
             analysis=result,
             metadata=meta,
+            blueprint=blueprint_data,
         )
     else:
         raise HTTPException(

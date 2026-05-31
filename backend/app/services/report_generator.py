@@ -300,12 +300,21 @@ def generate_csv_report(
     return pdf_bytes
 
 
+def _likelihood_color(likelihood: str) -> tuple[int, int, int]:
+    return {
+        "high": _GREEN,
+        "medium": _BLUE,
+        "low": _SLATE_400,
+    }.get(likelihood, _SLATE_400)
+
+
 def generate_image_report(
     *,
     org_name: str,
     filename: str,
     analysis: dict[str, Any],
     metadata: dict[str, Any],
+    blueprint: dict[str, Any] | None = None,
 ) -> bytes:
     """Generate a PDF report for an image analysis."""
     pdf = ForgeReport(org_name, filename)
@@ -424,6 +433,140 @@ def generate_image_report(
             pdf.set_x(18)
             pdf.body_text(opp.get("rationale", ""))
             pdf.ln(1)
+
+    # --- Redevelopment Blueprint ---
+    if blueprint:
+        pdf.section_title("Redevelopment Blueprint")
+
+        concept = blueprint.get("concept_name", "")
+        if concept:
+            pdf.subsection_title(_sanitize_text(concept))
+
+        vision = blueprint.get("vision_statement", "")
+        if vision:
+            pdf.body_text(vision)
+
+        total_cost = blueprint.get("estimated_total_cost", "")
+        if total_cost:
+            pdf.set_font("Helvetica", "B", 12)
+            pdf.set_text_color(*_NAVY)
+            pdf.cell(
+                0,
+                8,
+                _sanitize_text(f"Estimated Total Cost: {total_cost}"),
+                new_x="LMARGIN",
+                new_y="NEXT",
+            )
+            pdf.ln(4)
+
+        # Phases
+        phases = blueprint.get("phases", [])
+        if phases:
+            pdf.subsection_title("Implementation Phases")
+            for phase in phases:
+                if pdf.get_y() > 230:
+                    pdf.add_page()
+
+                phase_num = phase.get("phase_number", "")
+                phase_name = phase.get("name", "")
+                pdf.set_font("Helvetica", "B", 11)
+                pdf.set_text_color(*_NAVY)
+                pdf.cell(
+                    0,
+                    7,
+                    _sanitize_text(f"Phase {phase_num}: {phase_name}"),
+                    new_x="LMARGIN",
+                    new_y="NEXT",
+                )
+
+                timeline = phase.get("timeline", "")
+                cost = phase.get("estimated_cost", "")
+                if timeline or cost:
+                    pdf.set_font("Helvetica", "I", 9)
+                    pdf.set_text_color(*_SLATE_400)
+                    parts: list[str] = []
+                    if timeline:
+                        parts.append(f"Timeline: {timeline}")
+                    if cost:
+                        parts.append(f"Cost: {cost}")
+                    pdf.cell(
+                        0,
+                        5,
+                        _sanitize_text(" | ".join(parts)),
+                        new_x="LMARGIN",
+                        new_y="NEXT",
+                    )
+                    pdf.ln(2)
+
+                description = phase.get("description", "")
+                if description:
+                    pdf.body_text(description)
+
+                elements = phase.get("key_elements", [])
+                for elem in elements:
+                    pdf.set_x(18)
+                    pdf.set_font("Helvetica", "", 9)
+                    pdf.set_text_color(*_SLATE_700)
+                    pdf.cell(5, 5, "-", new_x="END")
+                    pdf.multi_cell(0, 5, _sanitize_text(str(elem)), new_x="LMARGIN")
+                    pdf.ln(1)
+
+                pdf.ln(3)
+
+        # Sustainability features
+        sus_features = blueprint.get("sustainability_features", [])
+        if sus_features:
+            pdf.subsection_title("Sustainability Features")
+            for feat in sus_features:
+                if pdf.get_y() > 260:
+                    pdf.add_page()
+                pdf.set_x(15)
+                pdf.set_font("Helvetica", "B", 9)
+                pdf.set_text_color(*_NAVY)
+                feature_name = feat.get("feature", "")
+                phase_num = feat.get("phase", "")
+                pdf.cell(5, 5, "-", new_x="END")
+                pdf.multi_cell(
+                    0,
+                    5,
+                    _sanitize_text(f"{feature_name} (Phase {phase_num})"),
+                    new_x="LMARGIN",
+                )
+                benefit = feat.get("benefit", "")
+                if benefit:
+                    pdf.set_x(20)
+                    pdf.set_font("Helvetica", "", 9)
+                    pdf.set_text_color(*_SLATE_700)
+                    pdf.multi_cell(0, 5, _sanitize_text(benefit), new_x="LMARGIN")
+                pdf.ln(1)
+
+        # Funding strategy
+        funding = blueprint.get("funding_strategy", {})
+        if isinstance(funding, dict) and funding:
+            pdf.subsection_title("Funding Strategy")
+            sources = funding.get("sources", [])
+            for src in sources:
+                if pdf.get_y() > 260:
+                    pdf.add_page()
+                likelihood = src.get("likelihood", "")
+                pdf.badge(likelihood, _likelihood_color(likelihood))
+                pdf.set_font("Helvetica", "", 10)
+                pdf.set_text_color(*_SLATE_700)
+                name = src.get("name", "")
+                amount = src.get("amount", "")
+                pdf.cell(
+                    0,
+                    5.5,
+                    _sanitize_text(f"{name} — {amount}"),
+                    new_x="LMARGIN",
+                    new_y="NEXT",
+                )
+                pdf.ln(1)
+
+            approach = funding.get("approach", "")
+            if approach:
+                pdf.ln(2)
+                pdf.body_text(approach)
 
     buf = io.BytesIO()
     pdf.output(buf)
