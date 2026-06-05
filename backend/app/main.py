@@ -47,6 +47,21 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         environment=settings.ENVIRONMENT,
     )
 
+    # Recover files orphaned by a previous process crash/restart.
+    try:
+        from app.services.stuck_files import recover_stuck_files
+
+        result = await recover_stuck_files()
+        if result["found"] > 0:
+            log.warning(
+                "startup_recovered_stuck_files",
+                found=result["found"],
+                recovered=result["recovered"],
+                file_ids=result["file_ids"],
+            )
+    except Exception as exc:
+        log.error("startup_stuck_file_recovery_failed", error=str(exc))
+
     yield  # --- application is running ---
 
     log.info("application_shutting_down")

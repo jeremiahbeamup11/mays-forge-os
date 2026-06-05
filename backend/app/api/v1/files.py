@@ -7,7 +7,7 @@ member of that org — both at the storage layer and the database layer.
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
 from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -20,10 +20,12 @@ from app.services.ai_analyzer import (
     AnalysisResult,
     analyze_csv,
     analyze_image,
+    analyze_pdf,
     generate_blueprint,
 )
 from app.services.csv_parser import CsvParseError, parse_csv
 from app.services.file_validation import FileValidationError, validate_upload
+from app.services.pdf_parser import PdfParseError, parse_pdf
 from app.services.report_generator import generate_csv_report, generate_image_report
 from app.services.storage import (
     BUCKET_NAME,
@@ -47,18 +49,28 @@ def _require_token(credentials: HTTPAuthorizationCredentials | None) -> str:
     return credentials.credentials
 
 
+def _get_service_client() -> Any:
+    """Build a Supabase client with the service-role key (bypasses RLS)."""
+    from supabase import create_client
+
+    from app.config import settings
+
+    return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
+
+
 async def _update_file_status(
-    access_token: str,
     file_id: str,
     *,
     processing_status: str,
     processing_error: str | None = None,
     analysis: dict[str, Any] | None = None,
 ) -> None:
-    """Update a file's processing status and optionally attach analysis."""
-    from app.db.organizations import get_user_scoped_client
+    """Update a file's processing status and optionally attach analysis.
 
-    client = get_user_scoped_client(access_token)
+    Uses the service-role client so this works in background tasks
+    where the original user token may have expired.
+    """
+    client = _get_service_client()
     update: dict[str, Any] = {"processing_status": processing_status}
     if processing_error is not None:
         update["processing_error"] = processing_error
@@ -72,7 +84,6 @@ async def _analyze_csv_file(
     file_bytes: bytes,
     filename: str,
     file_id: str,
-    access_token: str,
 ) -> AnalysisResult | None:
     """Parse and analyze a CSV file. Updates the file record with results.
 
@@ -83,12 +94,11 @@ async def _analyze_csv_file(
     """
     # Phase 1: Parse
     try:
-        await _update_file_status(access_token, file_id, processing_status="parsing")
+        await _update_file_status(file_id, processing_status="parsing")
         summary = parse_csv(file_bytes, filename)
     except CsvParseError as exc:
         _log.warning("csv_parse_failed", file_id=file_id, error=str(exc))
         await _update_file_status(
-            access_token,
             file_id,
             processing_status="failed",
             processing_error=f"CSV parsing failed: {exc}",
@@ -97,13 +107,12 @@ async def _analyze_csv_file(
 
     # Phase 2: Analyze with Claude
     try:
-        await _update_file_status(access_token, file_id, processing_status="analyzing")
+        await _update_file_status(file_id, processing_status="analyzing")
         csv_context = summary.to_prompt_context()
         result = await analyze_csv(csv_context, filename)
     except AnalysisError as exc:
         _log.warning("ai_analysis_failed", file_id=file_id, error=str(exc))
         await _update_file_status(
-            access_token,
             file_id,
             processing_status="failed",
             processing_error=f"AI analysis failed: {exc}",
@@ -125,7 +134,6 @@ async def _analyze_csv_file(
     }
 
     await _update_file_status(
-        access_token,
         file_id,
         processing_status="complete",
         analysis=analysis_payload,
@@ -138,6 +146,133 @@ async def _analyze_csv_file(
         recommendations_count=len(result.analysis.get("recommendations", [])),
     )
     return result
+
+
+async def _analyze_pdf_file(
+    *,
+    file_bytes: bytes,
+    filename: str,
+    file_id: str,
+) -> AnalysisResult | None:
+    """Extract and analyze a PDF document. Updates the file record with results.
+
+    Three-phase pipeline mirroring the CSV path:
+    1. Deterministic extraction (tables + sections with page references)
+    2. Claude analysis on the structured extraction
+    3. Store results
+    """
+    # Phase 1: Extract
+    try:
+        await _update_file_status(file_id, processing_status="parsing")
+        extraction = parse_pdf(file_bytes, filename)
+    except PdfParseError as exc:
+        _log.warning("pdf_parse_failed", file_id=file_id, error=str(exc))
+        await _update_file_status(
+            file_id,
+            processing_status="failed",
+            processing_error=f"PDF extraction failed: {exc}",
+        )
+        return None
+
+    # Phase 2: Analyze with Claude
+    try:
+        await _update_file_status(file_id, processing_status="analyzing")
+        pdf_context = extraction.to_prompt_context()
+        result = await analyze_pdf(pdf_context, filename)
+    except AnalysisError as exc:
+        _log.warning("pdf_analysis_failed", file_id=file_id, error=str(exc))
+        await _update_file_status(
+            file_id,
+            processing_status="failed",
+            processing_error=f"AI analysis failed: {exc}",
+        )
+        return None
+
+    # Phase 3: Store the result
+    analysis_payload: dict[str, Any] = {
+        "result": result.analysis,
+        "metadata": {
+            "prompt_version": result.prompt_version,
+            "model": result.model,
+            "input_tokens": result.input_tokens,
+            "output_tokens": result.output_tokens,
+            "duration_seconds": result.duration_seconds,
+            "estimated_cost_usd": result.estimated_cost_usd,
+        },
+        "pdf_extraction": extraction.to_dict(),
+    }
+
+    await _update_file_status(
+        file_id,
+        processing_status="complete",
+        analysis=analysis_payload,
+    )
+
+    _log.info(
+        "pdf_analysis_stored",
+        file_id=file_id,
+        tables_extracted=len(extraction.tables),
+        sections_extracted=len(extraction.sections),
+        vision_pages=len(extraction.vision_pages),
+        financial_findings=len(result.analysis.get("financial_findings", [])),
+    )
+    return result
+
+
+async def _run_analysis_safe(
+    *,
+    kind: str,
+    file_bytes: bytes,
+    content_type: str,
+    filename: str,
+    file_id: str,
+) -> None:
+    """Crash-safe wrapper: guarantees the file reaches a terminal status.
+
+    Any exception — known or unknown — results in status="failed" with the
+    error message stored on the record. The file is never left stuck in
+    "pending" or "analyzing".
+    """
+    try:
+        if kind == "csv":
+            await _analyze_csv_file(
+                file_bytes=file_bytes,
+                filename=filename,
+                file_id=file_id,
+            )
+        elif kind == "image":
+            await _analyze_image_file(
+                file_bytes=file_bytes,
+                content_type=content_type,
+                filename=filename,
+                file_id=file_id,
+            )
+        elif kind == "pdf":
+            await _analyze_pdf_file(
+                file_bytes=file_bytes,
+                filename=filename,
+                file_id=file_id,
+            )
+    except Exception as exc:
+        _log.error(
+            "analysis_unexpected_failure",
+            file_id=file_id,
+            kind=kind,
+            error=str(exc),
+            exc_info=True,
+        )
+        try:
+            await _update_file_status(
+                file_id,
+                processing_status="failed",
+                processing_error=f"Unexpected error during analysis: {exc}",
+            )
+        except Exception as status_exc:
+            _log.error(
+                "failed_to_set_failure_status",
+                file_id=file_id,
+                error=str(status_exc),
+            )
 
 
 @router.get(
@@ -173,6 +308,7 @@ async def upload_org_file(
     file: UploadFile,
     user: CurrentUser,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    background_tasks: BackgroundTasks,
 ) -> FileUploadResponse:
     """Upload a file to an organization."""
     token = _require_token(credentials)
@@ -242,21 +378,15 @@ async def upload_org_file(
 
     record = FileRecord(**row)
 
-    # --- Trigger analysis (non-blocking on failure) ---
-    if validated.kind == "csv":
-        await _analyze_csv_file(
-            file_bytes=file_bytes,
-            filename=file.filename or validated.safe_filename,
-            file_id=record.id,
-            access_token=token,
-        )
-    elif validated.kind == "image":
-        await _analyze_image_file(
+    # --- Schedule analysis as a background task ---
+    if validated.kind in ("csv", "image", "pdf"):
+        background_tasks.add_task(
+            _run_analysis_safe,
+            kind=validated.kind,
             file_bytes=file_bytes,
             content_type=validated.content_type,
             filename=file.filename or validated.safe_filename,
             file_id=record.id,
-            access_token=token,
         )
 
     return FileUploadResponse.from_record(record)
@@ -268,7 +398,6 @@ async def _analyze_image_file(
     content_type: str,
     filename: str,
     file_id: str,
-    access_token: str,
 ) -> AnalysisResult | None:
     """Analyze an uploaded image with Claude Vision, then generate a blueprint.
 
@@ -278,12 +407,11 @@ async def _analyze_image_file(
     """
     # Stage 1: Image analysis
     try:
-        await _update_file_status(access_token, file_id, processing_status="analyzing")
+        await _update_file_status(file_id, processing_status="analyzing")
         image_result = await analyze_image(file_bytes, content_type, filename)
     except AnalysisError as exc:
         _log.warning("image_analysis_failed", file_id=file_id, error=str(exc))
         await _update_file_status(
-            access_token,
             file_id,
             processing_status="failed",
             processing_error=f"Image analysis failed: {exc}",
@@ -299,7 +427,6 @@ async def _analyze_image_file(
         )
     except AnalysisError as exc:
         _log.warning("blueprint_generation_failed", file_id=file_id, error=str(exc))
-        # Don't fail the whole thing — store what we have
 
     analysis_payload: dict[str, Any] = {
         "result": image_result.analysis,
@@ -325,7 +452,6 @@ async def _analyze_image_file(
         }
 
     await _update_file_status(
-        access_token,
         file_id,
         processing_status="complete",
         analysis=analysis_payload,

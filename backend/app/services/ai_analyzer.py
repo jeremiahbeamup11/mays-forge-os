@@ -57,6 +57,18 @@ from app.services.prompts.image_analysis_v1 import (
 from app.services.prompts.image_analysis_v1 import (
     USER_PROMPT as IMAGE_USER_PROMPT,
 )
+from app.services.prompts.pdf_analysis_v1 import (
+    ANALYSIS_TOOL_SCHEMA as PDF_TOOL_SCHEMA,
+)
+from app.services.prompts.pdf_analysis_v1 import (
+    PROMPT_VERSION as PDF_PROMPT_VERSION,
+)
+from app.services.prompts.pdf_analysis_v1 import (
+    SYSTEM_PROMPT as PDF_SYSTEM_PROMPT,
+)
+from app.services.prompts.pdf_analysis_v1 import (
+    build_user_prompt as build_pdf_prompt,
+)
 
 _log = get_logger(__name__)
 
@@ -400,6 +412,80 @@ async def generate_blueprint(
     return AnalysisResult(
         analysis=blueprint_data,
         prompt_version=BLUEPRINT_PROMPT_VERSION,
+        model=_MODEL,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        duration_seconds=duration,
+        estimated_cost_usd=estimated_cost,
+    )
+
+
+async def analyze_pdf(pdf_context: str, filename: str = "unknown.pdf") -> AnalysisResult:
+    """Send structured PDF extraction to Claude for municipal financial analysis."""
+    client = _get_client()
+    user_prompt = build_pdf_prompt(pdf_context)
+
+    _log.info(
+        "ai_analysis_starting",
+        filename=filename,
+        model=_MODEL,
+        prompt_version=PDF_PROMPT_VERSION,
+        analysis_type="pdf",
+        context_length=len(pdf_context),
+    )
+
+    start = time.perf_counter()
+
+    try:
+        response = client.messages.create(  # type: ignore[call-overload]
+            model=_MODEL,
+            max_tokens=8192,
+            system=PDF_SYSTEM_PROMPT,
+            tools=[
+                {
+                    "type": "custom",
+                    "name": PDF_TOOL_SCHEMA["name"],
+                    "description": PDF_TOOL_SCHEMA["description"],
+                    "input_schema": PDF_TOOL_SCHEMA["input_schema"],
+                },
+            ],
+            tool_choice={"type": "tool", "name": "record_pdf_analysis"},
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+    except anthropic.AuthenticationError as exc:
+        raise AnalysisError("auth_failed", "Anthropic API key is invalid.") from exc
+    except anthropic.RateLimitError as exc:
+        raise AnalysisError(
+            "rate_limited",
+            "Anthropic API rate limit hit. Try again in a moment.",
+        ) from exc
+    except anthropic.APIError as exc:
+        raise AnalysisError("api_error", f"Anthropic API error: {exc}") from exc
+
+    duration = round(time.perf_counter() - start, 2)
+    analysis_data = _extract_tool_result(response, "record_pdf_analysis")
+
+    input_tokens = response.usage.input_tokens
+    output_tokens = response.usage.output_tokens
+    estimated_cost = _compute_cost(input_tokens, output_tokens)
+
+    _log.info(
+        "ai_analysis_complete",
+        filename=filename,
+        model=_MODEL,
+        prompt_version=PDF_PROMPT_VERSION,
+        analysis_type="pdf",
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        duration_seconds=duration,
+        estimated_cost_usd=estimated_cost,
+        financial_findings=len(analysis_data.get("financial_findings", [])),
+        infrastructure_findings=len(analysis_data.get("infrastructure_findings", [])),
+    )
+
+    return AnalysisResult(
+        analysis=analysis_data,
+        prompt_version=PDF_PROMPT_VERSION,
         model=_MODEL,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
