@@ -101,13 +101,20 @@ class AnalysisResult:
 
 
 def _get_client() -> anthropic.Anthropic:
-    """Build an Anthropic client using the configured API key."""
+    """Build an Anthropic client using the configured API key.
+
+    Note: auth_token=None works around SDK v0.96.0 bug where an empty
+    string default generates an invalid ``Bearer `` header.
+    """
     if not settings.ANTHROPIC_API_KEY:
         raise AnalysisError(
             "missing_api_key",
             "ANTHROPIC_API_KEY is not configured. Set it in .env.",
         )
-    return anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    return anthropic.Anthropic(
+        api_key=settings.ANTHROPIC_API_KEY,
+        auth_token=None,
+    )
 
 
 def _compute_cost(input_tokens: int, output_tokens: int) -> float:
@@ -439,7 +446,7 @@ async def analyze_pdf(pdf_context: str, filename: str = "unknown.pdf") -> Analys
     try:
         response = client.messages.create(  # type: ignore[call-overload]
             model=_MODEL,
-            max_tokens=8192,
+            max_tokens=16384,
             system=PDF_SYSTEM_PROMPT,
             tools=[
                 {
