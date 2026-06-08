@@ -300,6 +300,215 @@ def generate_csv_report(
     return pdf_bytes
 
 
+def generate_pdf_report(
+    *,
+    org_name: str,
+    filename: str,
+    analysis: dict[str, Any],
+    metadata: dict[str, Any],
+) -> bytes:
+    """Generate a PDF report for a municipal document (PDF) analysis."""
+    pdf = ForgeReport(org_name, filename)
+    pdf.alias_nb_pages()
+    pdf.add_page()
+
+    # --- Title ---
+    doc_type = analysis.get("document_type", "unknown").replace("_", " ").title()
+    fiscal_period = analysis.get("fiscal_period", "")
+
+    pdf.set_font("Helvetica", "B", 24)
+    pdf.set_text_color(*_NAVY)
+    pdf.ln(15)
+    pdf.cell(0, 12, "Municipal Document Analysis", new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_font("Helvetica", "", 14)
+    pdf.set_text_color(*_SLATE_700)
+    pdf.ln(4)
+    pdf.cell(0, 8, _sanitize_text(org_name), new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(*_SLATE_400)
+    pdf.cell(0, 6, _sanitize_text(f"Source: {filename}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(
+        0,
+        6,
+        _sanitize_text(f"Document type: {doc_type} | Fiscal period: {fiscal_period}"),
+        new_x="LMARGIN",
+        new_y="NEXT",
+    )
+    pdf.cell(
+        0,
+        6,
+        f"Model: {metadata.get('model', 'unknown')} | "
+        f"Prompt: {metadata.get('prompt_version', 'unknown')} | "
+        f"Generated: {datetime.now(UTC).strftime('%B %d, %Y')}",
+        new_x="LMARGIN",
+        new_y="NEXT",
+    )
+    pdf.ln(8)
+
+    # --- Summary ---
+    pdf.section_title("Summary")
+    summary = analysis.get("summary", "No summary available.")
+    pdf.body_text(summary)
+
+    # --- Financial Findings ---
+    findings = analysis.get("financial_findings", [])
+    if findings:
+        pdf.section_title(f"Financial Findings ({len(findings)})")
+        for i, finding in enumerate(findings, 1):
+            if pdf.get_y() > 240:
+                pdf.add_page()
+
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(*_NAVY)
+            pdf.cell(8, 6, f"{i}.", new_x="END")
+
+            pdf.badge(
+                finding.get("confidence", "unknown"),
+                _confidence_color(finding.get("confidence", "")),
+            )
+            pdf.badge(
+                finding.get("category", "general"),
+                _SLATE_400,
+            )
+
+            # Page citations
+            pages = finding.get("source_pages", [])
+            if pages:
+                pdf.set_font("Helvetica", "", 8)
+                pdf.set_text_color(*_SLATE_400)
+                page_str = ", ".join(str(p) for p in pages)
+                pdf.cell(0, 5.5, f"  pp. {page_str}", new_x="LMARGIN", new_y="NEXT")
+            else:
+                pdf.ln()
+
+            pdf.set_x(18)
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(*_NAVY)
+            pdf.multi_cell(0, 5.5, _sanitize_text(finding.get("title", "")), new_x="LMARGIN")
+
+            pdf.set_x(18)
+            pdf.body_text(finding.get("detail", ""))
+            pdf.ln(1)
+
+    # --- Infrastructure Findings ---
+    infra = analysis.get("infrastructure_findings", [])
+    if infra:
+        pdf.section_title(f"Infrastructure & Sustainability ({len(infra)})")
+        for i, finding in enumerate(infra, 1):
+            if pdf.get_y() > 240:
+                pdf.add_page()
+
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(*_NAVY)
+            pdf.cell(8, 6, f"{i}.", new_x="END")
+
+            pdf.badge(
+                finding.get("category", "general"),
+                _SLATE_400,
+            )
+
+            pages = finding.get("source_pages", [])
+            if pages:
+                pdf.set_font("Helvetica", "", 8)
+                pdf.set_text_color(*_SLATE_400)
+                page_str = ", ".join(str(p) for p in pages)
+                pdf.cell(0, 5.5, f"  pp. {page_str}", new_x="LMARGIN", new_y="NEXT")
+            else:
+                pdf.ln()
+
+            pdf.set_x(18)
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(*_NAVY)
+            pdf.multi_cell(0, 5.5, _sanitize_text(finding.get("title", "")), new_x="LMARGIN")
+
+            pdf.set_x(18)
+            pdf.body_text(finding.get("detail", ""))
+            pdf.ln(1)
+
+    # --- Recommendations ---
+    recommendations = analysis.get("recommendations", [])
+    if recommendations:
+        pdf.section_title(f"Recommendations ({len(recommendations)})")
+        for i, rec in enumerate(recommendations, 1):
+            if pdf.get_y() > 240:
+                pdf.add_page()
+
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(*_NAVY)
+            pdf.cell(8, 6, f"{i}.", new_x="END")
+
+            pdf.badge(
+                rec.get("priority", "medium"),
+                _priority_color(rec.get("priority", "")),
+            )
+
+            pages = rec.get("source_pages", [])
+            if pages:
+                pdf.set_font("Helvetica", "", 8)
+                pdf.set_text_color(*_SLATE_400)
+                page_str = ", ".join(str(p) for p in pages)
+                pdf.cell(0, 5.5, f"  pp. {page_str}", new_x="LMARGIN", new_y="NEXT")
+            else:
+                pdf.ln()
+
+            pdf.set_x(18)
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(*_NAVY)
+            pdf.multi_cell(0, 5.5, _sanitize_text(rec.get("action", "")), new_x="LMARGIN")
+
+            pdf.set_x(18)
+            pdf.body_text(rec.get("rationale", ""))
+
+            impact = rec.get("estimated_impact", "")
+            if impact:
+                pdf.set_x(18)
+                pdf.set_font("Helvetica", "BI", 9)
+                pdf.set_text_color(*_SLATE_400)
+                pdf.multi_cell(0, 5, _sanitize_text(f"Estimated impact: {impact}"), new_x="LMARGIN")
+            pdf.ln(2)
+
+    # --- Data Quality ---
+    dq = analysis.get("data_quality", {})
+    if dq:
+        pdf.section_title("Data Quality Assessment")
+
+        quality = dq.get("overall_quality", "unknown")
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_text_color(*_NAVY)
+        pdf.cell(30, 6, "Overall: ", new_x="END")
+        pdf.badge(quality, _condition_color(quality))
+        pdf.ln(8)
+
+        issues = dq.get("issues", [])
+        if issues:
+            for issue in issues:
+                if pdf.get_y() > 260:
+                    pdf.add_page()
+                pdf.set_x(15)
+                pdf.set_font("Helvetica", "", 9)
+                pdf.set_text_color(*_SLATE_700)
+                pdf.cell(5, 5, "-", new_x="END")
+                pdf.multi_cell(0, 5, _sanitize_text(issue), new_x="LMARGIN")
+                pdf.ln(1)
+
+    # Generate bytes
+    buf = io.BytesIO()
+    pdf.output(buf)
+    pdf_bytes = buf.getvalue()
+
+    _log.info(
+        "report_generated",
+        org_name=org_name,
+        filename=filename,
+        report_type="pdf_analysis",
+        pdf_size_bytes=len(pdf_bytes),
+    )
+
+    return pdf_bytes
+
+
 def _likelihood_color(likelihood: str) -> tuple[int, int, int]:
     return {
         "high": _GREEN,

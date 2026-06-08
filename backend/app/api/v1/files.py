@@ -26,7 +26,11 @@ from app.services.ai_analyzer import (
 from app.services.csv_parser import CsvParseError, parse_csv
 from app.services.file_validation import FileValidationError, validate_upload
 from app.services.pdf_parser import PdfParseError, parse_pdf
-from app.services.report_generator import generate_csv_report, generate_image_report
+from app.services.report_generator import (
+    generate_csv_report,
+    generate_image_report,
+    generate_pdf_report,
+)
 from app.services.storage import (
     BUCKET_NAME,
     StorageUploadError,
@@ -578,6 +582,13 @@ async def download_report(
             analysis=result,
             metadata=meta,
             blueprint=blueprint_data,
+        )
+    elif record.kind == "pdf":
+        pdf_bytes = generate_pdf_report(
+            org_name=org_name,
+            filename=record.original_filename,
+            analysis=result,
+            metadata=meta,
         )
     else:
         raise HTTPException(
