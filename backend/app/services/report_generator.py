@@ -38,7 +38,13 @@ _LIGHT_BG = (248, 250, 252)
 
 
 def _sanitize_text(text: str) -> str:
-    """Replace Unicode characters that fpdf2's built-in fonts can't render."""
+    """Replace Unicode characters that fpdf2's built-in fonts can't render.
+
+    Helvetica (built-in) only supports latin-1. Claude's analysis output
+    frequently includes arrows, smart quotes, and other Unicode. We map
+    them to safe ASCII equivalents rather than switching to a Unicode font
+    (which would bloat the PDF and require bundling a .ttf).
+    """
     replacements = {
         "\u2014": "--",  # em dash
         "\u2013": "-",  # en dash
@@ -50,10 +56,41 @@ def _sanitize_text(text: str) -> str:
         "\u2022": "-",  # bullet
         "\u00b7": "-",  # middle dot
         "\u2212": "-",  # minus sign
+        "\u2192": "->",  # right arrow
+        "\u2190": "<-",  # left arrow
+        "\u2194": "<->",  # left-right arrow
+        "\u2191": "^",  # up arrow
+        "\u2193": "v",  # down arrow
+        "\u2265": ">=",  # greater than or equal
+        "\u2264": "<=",  # less than or equal
+        "\u2260": "!=",  # not equal
+        "\u00d7": "x",  # multiplication sign
+        "\u00f7": "/",  # division sign
+        "\u2248": "~",  # approximately equal
+        "\u00b0": " deg",  # degree sign
+        "\u2032": "'",  # prime
+        "\u2033": '"',  # double prime
+        "\u00a0": " ",  # non-breaking space
+        "\u200b": "",  # zero-width space
+        "\u2010": "-",  # hyphen
+        "\u2011": "-",  # non-breaking hyphen
+        "\u00ad": "-",  # soft hyphen
+        "\u2015": "--",  # horizontal bar
+        "\u2043": "-",  # hyphen bullet
+        "\u25cf": "*",  # black circle
+        "\u25cb": "o",  # white circle
+        "\u25a0": "#",  # black square
+        "\u25a1": "[]",  # white square
+        "\u2713": "[x]",  # check mark
+        "\u2717": "[!]",  # ballot X
+        "\u00ae": "(R)",  # registered
+        "\u2122": "(TM)",  # trademark
+        "\u00a9": "(C)",  # copyright
     }
     for char, replacement in replacements.items():
         text = text.replace(char, replacement)
-    return text
+    # Catch-all: strip any remaining non-latin-1 characters rather than crash
+    return text.encode("latin-1", errors="replace").decode("latin-1")
 
 
 class ForgeReport(FPDF):
