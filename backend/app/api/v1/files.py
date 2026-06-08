@@ -161,10 +161,11 @@ async def _analyze_pdf_file(
     2. Claude analysis on the structured extraction
     3. Store results
     """
-    # Phase 1: Extract
+    # Phase 1: Extract (then release the raw PDF bytes)
     try:
         await _update_file_status(file_id, processing_status="parsing")
         extraction = parse_pdf(file_bytes, filename)
+        del file_bytes  # Free ~2-5MB before the Claude API call
     except PdfParseError as exc:
         _log.warning("pdf_parse_failed", file_id=file_id, error=str(exc))
         await _update_file_status(
@@ -175,6 +176,8 @@ async def _analyze_pdf_file(
         return None
 
     # Phase 2: Analyze with Claude
+    # Build the prompt context string, then let the extraction's heavy
+    # table/section lists be GC'd while the API call is in flight.
     try:
         await _update_file_status(file_id, processing_status="analyzing")
         pdf_context = extraction.to_prompt_context()
@@ -189,6 +192,9 @@ async def _analyze_pdf_file(
         return None
 
     # Phase 3: Store the result
+    # Note: We store extraction stats (not the full extraction) to keep the
+    # JSONB payload reasonable. The full extraction can be re-derived from
+    # the stored PDF if needed.
     analysis_payload: dict[str, Any] = {
         "result": result.analysis,
         "metadata": {
@@ -199,7 +205,13 @@ async def _analyze_pdf_file(
             "duration_seconds": result.duration_seconds,
             "estimated_cost_usd": result.estimated_cost_usd,
         },
-        "pdf_extraction": extraction.to_dict(),
+        "extraction_stats": {
+            "page_count": extraction.page_count,
+            "tables_extracted": len(extraction.tables),
+            "sections_extracted": len(extraction.sections),
+            "vision_pages": extraction.vision_pages,
+            "parse_warnings": extraction.parse_warnings,
+        },
     }
 
     await _update_file_status(

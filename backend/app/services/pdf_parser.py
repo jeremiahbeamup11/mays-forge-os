@@ -169,8 +169,10 @@ def parse_pdf(file_bytes: bytes, filename: str = "upload.pdf") -> PdfExtraction:
 
     page_count = len(pdf.pages)
     if page_count == 0:
+        pdf.close()
         raise PdfParseError("PDF has no pages.")
     if page_count > MAX_PAGES:
+        pdf.close()
         raise PdfParseError(f"PDF has {page_count} pages, exceeding the {MAX_PAGES}-page limit.")
 
     tables: list[ExtractedTable] = []
@@ -205,6 +207,14 @@ def parse_pdf(file_bytes: bytes, filename: str = "upload.pdf") -> PdfExtraction:
         else:
             tables.extend(page_tables)
             sections.extend(page_sections)
+
+        # Release page resources immediately to reduce peak memory on
+        # large documents (each page holds layout objects, char dicts, etc.)
+        page.flush_cache()
+
+    # Close the PDF to release the underlying file handle and all page objects.
+    # We've already extracted everything we need into our dataclasses.
+    pdf.close()
 
     vision_page_numbers = [vp.page_number for vp in vision_fallback_pages]
 
